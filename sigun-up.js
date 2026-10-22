@@ -133,7 +133,6 @@ module.exports = (client) => {
         const guildSettings = settings[guildId];
 
         if (interaction.customId === 'kayit_talep_et') {
-            // Zaman aşımını önlemek için hemen gizli bir yanıt veriyoruz
             await interaction.reply({ content: '⏳ Kayıt talebiniz işleniyor, size özel oda hazırlanıyor...', ephemeral: true }).catch(() => {});
 
             if (!guildSettings || !guildSettings.categoryId) {
@@ -166,7 +165,7 @@ module.exports = (client) => {
             }
 
             try {
-                // Kullanıcıya özel metin kanalı oluşturma
+                // Kullanıcıya özel metin kanalı oluşturma ve izinlerin atanması
                 const privateChannel = await guild.channels.create({
                     name: `kayıt-${interaction.user.username}`,
                     type: ChannelType.GuildText,
@@ -177,11 +176,11 @@ module.exports = (client) => {
                             deny: [PermissionFlagsBits.ViewChannel],
                         },
                         {
-                            id: interaction.user.id, // Sadece talep açan kullanıcı
+                            id: interaction.user.id, // Sadece talep açan kullanıcı görebilir ve yazabilir
                             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
                         },
                         {
-                            id: yetkiliRol.id, // Sadece @kayıtsorumlusu ekibi
+                            id: yetkiliRol.id, // Sadece @kayıtsorumlusu ekibi görebilir ve yazabilir
                             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
                         },
                         {
@@ -300,7 +299,7 @@ module.exports = (client) => {
         if (interaction.customId.startsWith('kayit_iptal_')) {
             await interaction.deferReply({ ephemeral: true }).catch(() => {});
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
-            const isAdmin =ahn = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
             if (!hasRole && !isAdmin) {
                 return interaction.editReply({ content: '❌ Bu işlem için yetkiniz yok!' });
             }
