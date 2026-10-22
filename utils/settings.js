@@ -20,6 +20,15 @@ function getGuildWelcomeImage(guildId) {
     return guildSettings.welcomeImage || guildSettings.customLogo || null;
 }
 
+function getGuildVoicePreferences(guildId) {
+    const guildSettings = getGuildSettings(guildId);
+
+    return {
+        selfDeaf: guildSettings.voiceSelfDeaf ?? true,
+        selfMute: guildSettings.voiceSelfMute ?? true
+    };
+}
+
 function saveSettings(data) {
     fs.writeFileSync(settingsPath, JSON.stringify(data, null, 4));
 }
@@ -41,6 +50,7 @@ module.exports = {
     getSettings,
     getGuildSettings,
     getGuildWelcomeImage,
+    getGuildVoicePreferences,
     saveSettings,
     updateGuildSettings
 };

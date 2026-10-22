@@ -28,6 +28,14 @@ module.exports = (client) => {
                 .setDescription('Botun bu sunucuda sabit bağlanacağı ses kanalı')
                 .addChannelTypes(ChannelType.GuildVoice)
                 .setRequired(false))
+        .addStringOption(option =>
+            option.setName('ses_durumu')
+                .setDescription('Botun ses kanalında sağır/susturulmuş veya açık durması')
+                .addChoices(
+                    { name: 'Sağır ve susturulmuş', value: 'deaf_muted' },
+                    { name: 'Kulaklık ve mikrofon açık', value: 'open' }
+                )
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
     const logCommand = new SlashCommandBuilder()
@@ -108,11 +116,16 @@ module.exports = (client) => {
             const category = interaction.options.getChannel('kategori');
             const role = interaction.options.getRole('rol');
             const voiceChannel = interaction.options.getChannel('ses_kanali');
+            const voiceStatus = interaction.options.getString('ses_durumu');
 
             client.settings.updateGuildSettings(guildId, {
                 categoryId: category.id,
                 roleId: role.id,
-                ...(voiceChannel ? { voiceChannelId: voiceChannel.id } : {})
+                ...(voiceChannel ? { voiceChannelId: voiceChannel.id } : {}),
+                ...(voiceStatus ? {
+                    voiceSelfDeaf: voiceStatus === 'deaf_muted',
+                    voiceSelfMute: voiceStatus === 'deaf_muted'
+                } : {})
             });
 
             if (voiceChannel) {
@@ -125,8 +138,18 @@ module.exports = (client) => {
                     });
             }
 
+            if (voiceStatus && !voiceChannel) {
+                const savedVoiceChannelId = client.settings.getGuildSettings(guildId).voiceChannelId;
+                if (savedVoiceChannelId) {
+                    client.voiceService.connectPersistentVoiceChannelById(client, savedVoiceChannelId)
+                        .catch(error => {
+                            console.error(`Sunucu ses durumu güncellenirken bağlantı yenilenemedi (${interaction.guild.name}):`, error);
+                        });
+                }
+            }
+
             return interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**${voiceChannel ? `\n🔊 Sabit ses kanalı: **${voiceChannel.name}**` : ''}`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**${voiceChannel ? `\n🔊 Sabit ses kanalı: **${voiceChannel.name}**` : ''}${voiceStatus ? `\n🎙️ Ses durumu: **${voiceStatus === 'deaf_muted' ? 'Sağır ve susturulmuş' : 'Kulaklık ve mikrofon açık'}**` : ''}`,
                 flags: 64
             });
         }

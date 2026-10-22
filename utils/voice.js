@@ -142,6 +142,17 @@ async function connectPersistentState(state) {
     }
 
     state.connectPromise = (async () => {
+        const voicePreferences = state.client.settings.getGuildVoicePreferences(state.guild.id);
+        const preferencesChanged = state.appliedVoicePreferences
+            && (state.appliedVoicePreferences.selfDeaf !== voicePreferences.selfDeaf
+                || state.appliedVoicePreferences.selfMute !== voicePreferences.selfMute);
+
+        if (preferencesChanged && state.connection) {
+            const previousConnection = state.connection;
+            state.connection = null;
+            previousConnection.destroy();
+        }
+
         if (state.connection && state.connection.state.status !== VoiceConnectionStatus.Destroyed) {
             await entersState(state.connection, VoiceConnectionStatus.Ready, 15_000);
             return state.connection;
@@ -158,11 +169,11 @@ async function connectPersistentState(state) {
             channelId: state.channel.id,
             guildId: state.guild.id,
             adapterCreator,
-            selfDeaf: true,
-            selfMute: true
+            ...voicePreferences
         });
 
         state.connection = connection;
+        state.appliedVoicePreferences = voicePreferences;
         connection.on('error', error => {
             scheduleReconnect(state, error);
         });
@@ -171,7 +182,7 @@ async function connectPersistentState(state) {
                 state.retryCount = 0;
             } else if (newState.status === VoiceConnectionStatus.Disconnected) {
                 recoverDisconnectedConnection(state, connection);
-            } else if (newState.status === VoiceConnectionStatus.Destroyed) {
+            } else if (newState.status === VoiceConnectionStatus.Destroyed && state.connection === connection) {
                 scheduleReconnect(state, new Error('Voice connection was destroyed'));
             }
         });
@@ -230,6 +241,7 @@ async function connectPersistentVoiceChannelById(client, channelId) {
 
     if (!state) {
         state = {
+            client,
             guild,
             channel,
             connection: null,
@@ -240,6 +252,7 @@ async function connectPersistentVoiceChannelById(client, channelId) {
         };
         persistentConnections.set(guildId, state);
     } else {
+        state.client = client;
         state.guild = guild;
         state.channel = channel;
     }
@@ -312,12 +325,14 @@ async function joinMemberVoiceChannel(member) {
     }
 
     const existingConnection = getVoiceConnection(channel.guild.id);
+    const voicePreferences = client?.settings?.getGuildVoicePreferences
+        ? client.settings.getGuildVoicePreferences(channel.guild.id)
+        : { selfDeaf: true, selfMute: true };
     const connection = joinVoiceChannel({
         channelId: channel.id,
         guildId: channel.guild.id,
         adapterCreator,
-        selfDeaf: true,
-        selfMute: false
+        ...voicePreferences
     });
 
     if (!existingConnection) {

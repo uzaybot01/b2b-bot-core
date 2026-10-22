@@ -17,7 +17,7 @@ module.exports = client => {
         }).addFields(
             {
                 name: '/setup `<kategori>` `<rol>` `[ses_kanali]`',
-                value: 'Kayıt kategorisini ve yetkili rolünü ayarlar; isteğe bağlı ses kanalı botun o sunucudaki sabit bağlantı yeridir.'
+                value: 'Kayıt kategorisi ve yetkili rolünü ayarlar; `ses_kanali` sabit kanalı, `ses_durumu` ise sağır/susturulmuş ya da kulaklık/mikrofon açık tercihini belirler.'
             },
             {
                 name: '/log `<kanal>`',
