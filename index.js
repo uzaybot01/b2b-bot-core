@@ -15,6 +15,7 @@ const client = new Client({
 
 client.commands = new Collection();
 client.settings = require('./utils/settings');
+client.voice = require('./utils/voice');
 
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath)

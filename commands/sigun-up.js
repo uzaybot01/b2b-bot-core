@@ -247,7 +247,20 @@ module.exports = (client) => {
                     ]
                 });
 
-                await interaction.editReply({ content: `✅ Size özel kayıt odası başarıyla oluşturuldu: ${privateChannel}` }).catch(() => {});
+                let voiceNotice = '';
+                if (interaction.member.voice.channel) {
+                    try {
+                        await client.voice.joinMemberVoiceChannel(interaction.member);
+                        voiceNotice = '\n🔊 Bot ses kanalınıza bağlandı.';
+                    } catch (error) {
+                        console.error('Kayıt talebi sırasında ses kanalına bağlanılamadı:', error);
+                        voiceNotice = '\n⚠️ Bot ses kanalına bağlanamadı. Ses kanalı izinlerini kontrol edin.';
+                    }
+                }
+
+                await interaction.editReply({
+                    content: `✅ Size özel kayıt odası başarıyla oluşturuldu: ${privateChannel}${voiceNotice}`
+                }).catch(() => {});
 
                 const welcomeDescription = (guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION)
                     .replaceAll('{user}', `${interaction.user}`);
@@ -304,15 +317,17 @@ module.exports = (client) => {
             }
 
             const targetUserId = interaction.customId.split('_')[2];
-            const targetMember = await interaction.guild.members.fetch(targetUserId).catch(() => null);
-
-            if (targetMember && targetMember.voice.channel) {
-                const targetVoiceChannel = targetMember.voice.channel;
-                if (interaction.member.voice.channel) {
-                    try {
-                        await interaction.member.voice.setChannel(targetVoiceChannel);
-                    } catch (err) {}
+            let voiceNotice = '';
+            if (interaction.member.voice.channel) {
+                try {
+                    const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
+                    voiceNotice = ` Bot, bulunduğunuz ${voiceChannel} ses kanalına bağlandı.`;
+                } catch (error) {
+                    console.error('Kayıt devralınırken ses kanalına bağlanılamadı:', error);
+                    voiceNotice = ' Bot ses kanalına bağlanamadı; kanal izinlerini kontrol edin.';
                 }
+            } else {
+                voiceNotice = ' Bir ses kanalında olmadığınız için bot ses bağlantısı kuramadı.';
             }
 
             const sonucButonlari = new ActionRowBuilder().addComponents(
@@ -334,7 +349,7 @@ module.exports = (client) => {
                 .setColor('#5865F2');
 
             await interaction.message.edit({
-                content: `📌 Bu kayıt süreci ${interaction.user} tarafından yürütülüyor. Sonucu seçin:`,
+                content: `📌 Bu kayıt süreci ${interaction.user} tarafından yürütülüyor. Sonucu seçin:${voiceNotice}`,
                 embeds: [updatedEmbed],
                 components: [sonucButonlari]
             }).catch(() => {});
