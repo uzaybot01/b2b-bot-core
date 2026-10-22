@@ -8,6 +8,30 @@ const { ChannelType, PermissionsBitField } = require('discord.js');
 
 const persistentConnections = new Map();
 const MAX_RECONNECT_DELAY_MS = 60_000;
+const ADAPTER_READY_ATTEMPTS = 3;
+const ADAPTER_RETRY_DELAY_MS = 1_000;
+
+async function getVoiceAdapter(guild, channelId) {
+    if (!guild || typeof guild.id !== 'string' || !guild.id) {
+        throw new Error(`Cannot connect to voice channel ${channelId}: guild is not available`);
+    }
+
+    for (let attempt = 1; attempt <= ADAPTER_READY_ATTEMPTS; attempt += 1) {
+        if (typeof guild.voiceAdapterCreator === 'function') {
+            return guild.voiceAdapterCreator;
+        }
+
+        console.warn(
+            `Voice adapter is not ready for guild ${guild.id} (attempt ${attempt}/${ADAPTER_READY_ATTEMPTS}); retrying in ${ADAPTER_RETRY_DELAY_MS}ms`
+        );
+
+        if (attempt < ADAPTER_READY_ATTEMPTS) {
+            await new Promise(resolve => setTimeout(resolve, ADAPTER_RETRY_DELAY_MS));
+        }
+    }
+
+    throw new Error(`Voice adapter is unavailable for guild ${guild.id}, channel ${channelId}`);
+}
 
 function scheduleReconnect(state, error) {
     if (!state.active || state.retryTimer || state.connectPromise) {
@@ -69,6 +93,7 @@ async function connectPersistentState(state) {
             return state.connection;
         }
 
+        const adapterCreator = await getVoiceAdapter(state.guild, state.channel.id);
         const botMember = await state.guild.members.fetchMe();
         const permissions = state.channel.permissionsFor(botMember);
         if (!permissions?.has(PermissionsBitField.Flags.Connect)) {
@@ -78,7 +103,7 @@ async function connectPersistentState(state) {
         const connection = joinVoiceChannel({
             channelId: state.channel.id,
             guildId: state.guild.id,
-            adapterCreator: state.guild.voiceAdapterCreator,
+            adapterCreator,
             selfDeaf: true,
             selfMute: true
         });
@@ -119,6 +144,9 @@ async function connectPersistentVoiceChannelById(client, channelId) {
     const channel = await client.channels.fetch(channelId);
     if (!channel || channel.type !== ChannelType.GuildVoice) {
         throw new Error(`Configured voice channel ${channelId} was not found or is not a standard voice channel`);
+    }
+    if (!channel.guild) {
+        throw new Error(`Configured voice channel ${channelId} does not have a guild available`);
     }
 
     let state = persistentConnections.get(channel.guild.id);
@@ -187,6 +215,7 @@ async function joinMemberVoiceChannel(member) {
         return null;
     }
 
+    const adapterCreator = await getVoiceAdapter(channel.guild, channel.id);
     const botMember = await channel.guild.members.fetchMe();
     const permissions = channel.permissionsFor(botMember);
     if (!permissions?.has(PermissionsBitField.Flags.Connect)) {
@@ -197,7 +226,7 @@ async function joinMemberVoiceChannel(member) {
     const connection = joinVoiceChannel({
         channelId: channel.id,
         guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
+        adapterCreator,
         selfDeaf: true,
         selfMute: false
     });
