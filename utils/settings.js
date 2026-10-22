@@ -15,6 +15,11 @@ function getGuildSettings(guildId) {
     return getSettings()[guildId] || {};
 }
 
+function getGuildWelcomeImage(guildId) {
+    const guildSettings = getGuildSettings(guildId);
+    return guildSettings.welcomeImage || guildSettings.customLogo || null;
+}
+
 function saveSettings(data) {
     fs.writeFileSync(settingsPath, JSON.stringify(data, null, 4));
 }
@@ -35,6 +40,7 @@ function updateGuildSettings(guildId, updates) {
 module.exports = {
     getSettings,
     getGuildSettings,
+    getGuildWelcomeImage,
     saveSettings,
     updateGuildSettings
 };

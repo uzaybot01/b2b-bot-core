@@ -139,7 +139,7 @@ module.exports = (client) => {
 
             const guildSettings = client.settings.getGuildSettings(guildId);
             const panelImageUrl = panelImage || guildSettings.customLogo;
-            const welcomeImageUrl = welcomeImage || guildSettings.welcomeImage || guildSettings.customLogo;
+            const welcomeImageUrl = welcomeImage || guildSettings.customLogo || null;
 
             if (panelImageUrl && !isValidHttpUrl(panelImageUrl)) {
                 return interaction.reply({ content: '❌ Panel görseli için geçerli bir HTTP veya HTTPS URL’si girin.', flags: 64 });
@@ -151,9 +151,6 @@ module.exports = (client) => {
 
             guildSettings.welcomeTitle = welcomeTitle || guildSettings.welcomeTitle || DEFAULT_WELCOME_TITLE;
             guildSettings.welcomeDescription = welcomeDescription || guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION;
-            if (welcomeImage) {
-                guildSettings.welcomeImage = welcomeImage;
-            }
 
             const embed = createEmbed({
                 title: baslik,
@@ -176,7 +173,7 @@ module.exports = (client) => {
             client.settings.updateGuildSettings(guildId, {
                 welcomeTitle: guildSettings.welcomeTitle,
                 welcomeDescription: guildSettings.welcomeDescription,
-                ...(welcomeImage ? { welcomeImage } : {})
+                welcomeImage: welcomeImageUrl
             });
 
             return interaction.reply({
@@ -254,7 +251,7 @@ module.exports = (client) => {
 
                 const welcomeDescription = (guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION)
                     .replaceAll('{user}', `${interaction.user}`);
-                const welcomeImage = guildSettings.welcomeImage || guildSettings.customLogo;
+                const welcomeImage = client.settings.getGuildWelcomeImage(guildId);
                 const uyeEmbed = createEmbed({
                     title: guildSettings.welcomeTitle || DEFAULT_WELCOME_TITLE,
                     description: welcomeDescription,
