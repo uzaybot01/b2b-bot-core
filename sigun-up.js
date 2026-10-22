@@ -1,4 +1,4 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -22,8 +22,8 @@ module.exports = (client) => {
             .setName('setup')
             .setDescription('Kayıt botu kanal ve rol ayarlarını yapılandırır.')
             .addChannelOption(option => 
-                option.setName('kanal')
-                    .setDescription('Kayıt bildirimlerinin gideceği ekip metin kanalı')
+                option.setName('kategori')
+                    .setDescription('Kişiye özel kayıt kanallarının açılacağı Kategori')
                     .setRequired(true))
             .addRoleOption(option => 
                 option.setName('rol')
@@ -40,7 +40,7 @@ module.exports = (client) => {
                     .setRequired(true))
             .addStringOption(option =>
                 option.setName('baslik')
-                    .setDescription('Embed başlığı (Örn: 🌟 Yeşilsancak Sunucumuza Hoş Geldiniz! 🌟)')
+                    .setDescription('Embed başlığı')
                     .setRequired(false))
             .addStringOption(option =>
                 option.setName('aciklama')
@@ -66,27 +66,27 @@ module.exports = (client) => {
         const guildId = interaction.guild.id;
 
         if (interaction.commandName === 'setup') {
-            const channel = interaction.options.getChannel('kanal');
+            const category = interaction.options.getChannel('kategori');
             const role = interaction.options.getRole('rol');
 
             const settings = getSettings();
             settings[guildId] = {
                 ...(settings[guildId] || {}),
-                channelId: channel.id,
+                categoryId: category.id,
                 roleId: role.id
             };
             saveSettings(settings);
 
             await interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Ekip Kanalı: ${channel}\n🛡️ Yetkili Rol: ${role}`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: ${category.name}\n🛡️ Yetkili Rol: ${role}`,
                 ephemeral: true
             });
         }
 
         if (interaction.commandName === 'panel') {
             const targetChannel = interaction.options.getChannel('kanal');
-            const baslik = interaction.options.getString('baslik') || '🌟 Sunucumuza Hoş Geldiniz! 🌟';
-            const aciklama = interaction.options.getString('aciklama') || 'Kayıt işlemlerinizi başlatmak ve yetkili ekibimize haber vermek için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.';
+            const baslik = interaction.options.getString('baslik') || '🌟 @Yeşilsancak Sunucumuza Hoş Geldiniz! 🌟';
+            const aciklama = interaction.options.getString('aciklama') || 'Kayıt işlemlerinizi başlatmak ve kişiye özel kayıt odanızı oluşturmak için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.';
             const gorsel = interaction.options.getString('gorsel');
 
             const embed = new EmbedBuilder()
@@ -96,7 +96,7 @@ module.exports = (client) => {
                 .setTimestamp();
 
             if (gorsel) {
-                embed.setImage(gorsel); // GIF veya resim ekleme desteği
+                embed.setImage(gorsel);
             }
 
             const row = new ActionRowBuilder().addComponents(
@@ -113,7 +113,7 @@ module.exports = (client) => {
             });
 
             await interaction.reply({
-                content: `✅ Özel tasarımlı kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
+                content: `✅ Kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
                 ephemeral: true
             });
         }
@@ -127,8 +127,8 @@ module.exports = (client) => {
         const guildSettings = settings[guildId];
 
         if (interaction.customId === 'kayit_talep_et') {
-            if (!guildSettings) {
-                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış!', ephemeral: true });
+            if (!guildSettings || !guildSettings.categoryId) {
+                return interaction.reply({ content: '❌ Bu sunucuda bot henüz tamamen yapılandırılmamış! Lütfen yöneticiden /setup komutunu çalıştırmasını isteyin.', ephemeral: true });
             }
 
             const userId = interaction.user.id;
@@ -149,13 +149,40 @@ module.exports = (client) => {
 
             cooldowns.set(userId, now);
 
-            await interaction.reply({ content: '✅ Kayıt talebiniz başarıyla oluşturuldu ve ekibe iletildi.', ephemeral: true });
-
             const guild = interaction.guild;
-            const logChannel = guild.channels.cache.get(guildSettings.channelId);
+            const category = guild.channels.cache.get(guildSettings.categoryId);
             const yetkiliRol = guild.roles.cache.get(guildSettings.roleId);
 
-            if (!logChannel || !yetkiliRol) return;
+            if (!category || !yetkiliRol) {
+                return interaction.reply({ content: '❌ Ayarlanan kategori veya yetkili rolü bulunamadı!', ephemeral: true });
+            }
+
+            // Kullanıcıya özel metin kanalı oluşturma
+            const privateChannel = await guild.channels.create({
+                name: `kayıt-${interaction.user.username}`,
+                type: ChannelType.GuildText,
+                parent: category,
+                permissionOverwrites: [
+                    {
+                        id: guild.id, // @everyone
+                        deny: [PermissionFlagsBits.ViewChannel],
+                    },
+                    {
+                        id: interaction.user.id, // Sadece talep açan kullanıcı
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                    },
+                    {
+                        id: yetkiliRol.id, // Sadece @kayıtsorumlusu ekibi
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                    },
+                    {
+                        id: client.user.id, // Bot
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels],
+                    }
+                ]
+            });
+
+            await interaction.reply({ content: `✅ Size özel kayıt odası oluşturuldu: ${privateChannel}`, ephemeral: true });
 
             const aktifYetkililer = yetkiliRol.members.filter(member => {
                 const status = member.presence?.status;
@@ -170,35 +197,22 @@ module.exports = (client) => {
             );
 
             const embed = new EmbedBuilder()
-                .setTitle('🔔 Yeni Kayıt / Destek Talebi!')
+                .setTitle('🔔 Yeni Kişiye Özel Kayıt Talebi!')
                 .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Durum:** Beklemede (İlgilenilmeyen)\nÇevrim içi yetkili sayısı: **${aktifYetkililer.size}**`)
                 .setColor('#17161E')
                 .setTimestamp();
 
-            const sentMessage = await logChannel.send({
-                content: `${yetkiliRol}, yeni bir kayıt talebi var!`,
+            const sentMessage = await privateChannel.send({
+                content: `${yetkiliRol}, ${interaction.user} için yeni bir kayıt odası açıldı!`,
                 embeds: [embed],
                 components: [aldimButonu]
             });
 
-            setTimeout(async () => {
-                try {
-                    const fetchedMsg = await logChannel.messages.fetch(sentMessage.id).catch(() => null);
-                    if (fetchedMsg && fetchedMsg.components.length > 0) {
-                        const oldEmbed = fetchedMsg.embeds[0];
-                        const updatedEmbed = EmbedBuilder.from(oldEmbed)
-                            .setDescription(oldEmbed.description.replace('Durum: Beklemede (İlgilenilmeyen)', 'Durum: ⚠️ **İlgilenilmedi (Süre Aşımı / Kimse Almadı)**'))
-                            .setColor('#FFA500');
-                        
-                        await fetchedMsg.edit({ embeds: [updatedEmbed] }).catch(() => {});
-                    }
-                } catch (e) {}
-            }, 120000);
-
+            // Online yetkililere DM bildirimi
             aktifYetkililer.forEach(async (yetkili) => {
                 try {
                     await yetkili.send({
-                        content: `🔔 **${guild.name}** sunucusunda çevrim içi olduğunuz için ekibe yeni bir kayıt talebi düştü!\nKullanıcı: **${interaction.user.tag}**`
+                        content: `🔔 **${guild.name}** sunucusunda ${interaction.user.tag} için kişiye özel kayıt odası açıldı: <#${privateChannel.id}>`
                     });
                 } catch (err) {}
             });
@@ -253,6 +267,7 @@ module.exports = (client) => {
             });
         }
 
+        // Başarılı olunca kanal otomatik silinir
         if (interaction.customId.startsWith('kayit_basarili_')) {
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
@@ -260,19 +275,14 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Bu işlem için yetkiniz yok!', ephemeral: true });
             }
 
-            const targetUserId = interaction.customId.split('_')[2];
-            const oldEmbed = interaction.message.embeds[0];
-            const updatedEmbed = EmbedBuilder.from(oldEmbed)
-                .setDescription(`**Kullanıcı:** <@${targetUserId}>\n**İşlem Sorumlusu:** ${interaction.user}\n**Durum:** ✅ **BAŞARILI** (Tamamlandı)`)
-                .setColor('#2ECC71');
-
-            await interaction.update({
-                content: `✅ Kayıt işlemi ${interaction.user} tarafından **BAŞARILI** olarak sonuçlandırıldı.`,
-                embeds: [updatedEmbed],
-                components: []
-            });
+            await interaction.reply({ content: `✅ Kayıt başarıyla tamamlandı. Bu kanal 5 saniye içinde kapatılacaktır.`, ephemeral: true });
+            
+            setTimeout(async () => {
+                await interaction.channel.delete().catch(() => {});
+            }, 5000);
         }
 
+        // İptal olunca kanal otomatik silinir
         if (interaction.customId.startsWith('kayit_iptal_')) {
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
@@ -280,17 +290,11 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Bu işlem için yetkiniz yok!', ephemeral: true });
             }
 
-            const targetUserId = interaction.customId.split('_')[2];
-            const oldEmbed = interaction.message.embeds[0];
-            const updatedEmbed = EmbedBuilder.from(oldEmbed)
-                .setDescription(`**Kullanıcı:** <@${targetUserId}>\n**İşlem Sorumlusu:** ${interaction.user}\n**Durum:** ❌ **İPTAL EDİLDİ**`)
-                .setColor('#ED4245');
-
-            await interaction.update({
-                content: `❌ Kayıt işlemi ${interaction.user} tarafından **İPTAL** edildi.`,
-                embeds: [updatedEmbed],
-                components: []
-            });
+            await interaction.reply({ content: `❌ Kayıt iptal edildi. Bu kanal 5 saniye içinde kapatılacaktır.`, ephemeral: true });
+            
+            setTimeout(async () => {
+                await interaction.channel.delete().catch(() => {});
+            }, 5000);
         }
     });
 };
