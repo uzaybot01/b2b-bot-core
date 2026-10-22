@@ -6,7 +6,7 @@ const settingsPath = path.join(__dirname, 'settings.json');
 
 // Kullanıcıların son talep zamanlarını tutmak için Map (Kullanıcı ID -> Zaman ms)
 const cooldowns = new Map();
-const COOLDOWN_SECONDS = 60; // Timeout / Bekleme süresi (Örn: 60 saniye)
+const COOLDOWN_SECONDS = 120; // 2 dakika (120 saniye) timeout süresi
 
 function getSettings() {
     if (!fs.existsSync(settingsPath)) fs.writeFileSync(settingsPath, '{}');
@@ -24,7 +24,7 @@ module.exports = (client) => {
             .setDescription('Kayıt botu kanal ve rol ayarlarını yapılandırır.')
             .addChannelOption(option => 
                 option.setName('kanal')
-                    .setDescription('Kayıt bildirimlerinin gideceği yetkili/log kanalı')
+                    .setDescription('Kayıt bildirimlerinin gideceği ekip metin kanalı')
                     .setRequired(true))
             .addRoleOption(option => 
                 option.setName('rol')
@@ -67,7 +67,7 @@ module.exports = (client) => {
             saveSettings(settings);
 
             await interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Bildirim Kanalı: ${channel}\n🛡️ Yetkili Rol: ${role}`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Ekip Kanalı: ${channel}\n🛡️ Yetkili Rol: ${role}`,
                 ephemeral: true
             });
         }
@@ -110,38 +110,37 @@ module.exports = (client) => {
 
         if (interaction.customId === 'kayit_talep_et') {
             if (!guildSettings) {
-                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış! Lütfen yöneticiden /setup komutunu çalıştırmasını isteyin.', ephemeral: true });
+                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış!', ephemeral: true });
             }
 
             const userId = interaction.user.id;
             const now = Date.now();
 
-            // Timeout / Bekleme Süresi Kontrolü (Spam Önleme)
+            // 2 Dakikalık Timeout / Cooldown Kontrolü
             if (cooldowns.has(userId)) {
                 const expirationTime = cooldowns.get(userId) + (COOLDOWN_SECONDS * 1000);
                 if (now < expirationTime) {
                     const timeLeft = Math.ceil((expirationTime - now) / 1000);
+                    const minutes = Math.floor(timeLeft / 60);
+                    const seconds = timeLeft % 60;
                     return interaction.reply({ 
-                        content: `⏳ Çok sık kayıt talebinde bulunuyorsunuz! Lütfen yeni bir talep açmak için **${timeLeft}** saniye bekleyin.`, 
+                        content: `⏳ Çok sık kayıt talebinde bulunuyorsunuz! Lütfen yeni bir talep açmak için **${minutes} dakika ${seconds} saniye** bekleyin.`, 
                         ephemeral: true 
                     });
                 }
             }
 
-            // Süre dolduysa veya ilk kez açıyorsa süreyi güncelle
             cooldowns.set(userId, now);
 
-            await interaction.reply({ content: '✅ Kayıt talebiniz başarıyla oluşturuldu ve yetkili ekibe iletildi.', ephemeral: true });
+            await interaction.reply({ content: '✅ Kayıt talebiniz başarıyla oluşturuldu ve ekibe iletildi.', ephemeral: true });
 
             const guild = interaction.guild;
             const logChannel = guild.channels.cache.get(guildSettings.channelId);
             const yetkiliRol = guild.roles.cache.get(guildSettings.roleId);
 
-            if (!logChannel || !yetkiliRol) {
-                return;
-            }
+            if (!logChannel || !yetkiliRol) return;
 
-            // Aktif çevrim içi yetkilileri filtreleme ve DM bildirimi
+            // Sadece çevrim içi (online, idle, dnd) olan kayıt sorumlularını filtrele
             const aktifYetkililer = yetkiliRol.members.filter(member => {
                 const status = member.presence?.status;
                 return status && status !== 'offline';
@@ -156,25 +155,25 @@ module.exports = (client) => {
 
             const embed = new EmbedBuilder()
                 .setTitle('🔔 Yeni Kayıt / Destek Talebi!')
-                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\nDurum: Yetkili ekibe ve online yetkililere bildirildi.`)
+                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Durum:** Ekip kanalına bildirildi. Çevrim içi yetkili sayısı: **${aktifYetkililer.size}**`)
                 .setColor('#17161E')
                 .setTimestamp();
 
-            // Bildirimi sadece belirlenen log / yetkili kanalına gönder (giriş kanalında kirlilik yaratmaz)
+            // Bildirimi kayıt ekip kanalına gönder
             await logChannel.send({
                 content: `${yetkiliRol}, yeni bir kayıt talebi var!`,
                 embeds: [embed],
                 components: [aldimButonu]
             });
 
-            // Online olan yetkililere özelden (DM) haber ver
+            // Sadece çevrim içi olan yetkililere özelden (DM) haber ver
             aktifYetkililer.forEach(async (yetkili) => {
                 try {
                     await yetkili.send({
-                        content: `🔔 **${guild.name}** sunucusunda çevrim içi olduğunuz için yeni bir kayıt talebi düştü!\nKullanıcı: **${interaction.user.tag}**`
+                        content: `🔔 **${guild.name}** sunucusunda çevrim içi olduğunuz için ekibe yeni bir kayıt talebi düştü!\nKullanıcı: **${interaction.user.tag}**`
                     });
                 } catch (err) {
-                    // Kullanıcının DM'leri kapalıysa hatayı yut
+                    // DM kapalıysa hatayı yut
                 }
             });
         }
@@ -184,7 +183,6 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Sunucu ayarları bulunamadı.', ephemeral: true });
             }
 
-            // Yetki Güvenliği Kontrolü: Sadece yetkili rolüne sahip olanlar veya Adminler devralabilir
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -192,7 +190,7 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Bu butonu yalnızca kayıt yetkilileri kullanabilir!', ephemeral: true });
             }
 
-            // Butona basıldığında mesajı güncelleyerek diğer yetkililerin ekranında butonları devre dışı bırak
+            // Biri devraldığında tüm ekip kanalındaki butonları etkisizleştir ve güncelle
             await interaction.update({
                 content: `✅ Bu kayıt süreci ${interaction.user} tarafından devralındı!`,
                 components: []
