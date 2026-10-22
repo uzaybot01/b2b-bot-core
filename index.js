@@ -33,7 +33,15 @@ for (const file of commandFiles) {
     console.log(`Modül yüklendi: ${file}`);
 }
 
-client.once('ready', () => {
+client.once('ready', async () => {
+    try {
+        const commands = [...client.commands.values()].map(command => command.toJSON());
+        await client.application.commands.set(commands);
+        console.log(`Slash komutları yüklendi: ${commands.length}`);
+    } catch (error) {
+        console.error('Slash komutları yüklenirken hata oluştu:', error);
+    }
+
     console.log(`Bot başarıyla aktif edildi: ${client.user.tag}`);
 });
 

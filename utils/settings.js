@@ -11,11 +11,30 @@ function getSettings() {
     return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 }
 
+function getGuildSettings(guildId) {
+    return getSettings()[guildId] || {};
+}
+
 function saveSettings(data) {
     fs.writeFileSync(settingsPath, JSON.stringify(data, null, 4));
 }
 
+function updateGuildSettings(guildId, updates) {
+    const settings = getSettings();
+    const guildSettings = {
+        ...(settings[guildId] || {}),
+        ...updates
+    };
+
+    settings[guildId] = guildSettings;
+    saveSettings(settings);
+
+    return guildSettings;
+}
+
 module.exports = {
     getSettings,
-    saveSettings
+    getGuildSettings,
+    saveSettings,
+    updateGuildSettings
 };
