@@ -4,9 +4,9 @@ const path = require('path');
 
 const settingsPath = path.join(__dirname, 'settings.json');
 
-// Basit Rate Limit (Cooldown) Haritası: kullanıcı ID -> son işlem zamanı (ms)
+// Kullanıcıların son talep zamanlarını tutmak için Map (Kullanıcı ID -> Zaman ms)
 const cooldowns = new Map();
-const COOLDOWN_SECONDS = 5; // Üst üste tıklamaları engellemek için 5 saniye bekleme süresi
+const COOLDOWN_SECONDS = 60; // Timeout / Bekleme süresi (Örn: 60 saniye)
 
 function getSettings() {
     if (!fs.existsSync(settingsPath)) fs.writeFileSync(settingsPath, '{}');
@@ -24,17 +24,17 @@ module.exports = (client) => {
             .setDescription('Kayıt botu kanal ve rol ayarlarını yapılandırır.')
             .addChannelOption(option => 
                 option.setName('kanal')
-                    .setDescription('Kayıt bildirimlerinin gideceği log kanalı')
+                    .setDescription('Kayıt bildirimlerinin gideceği yetkili/log kanalı')
                     .setRequired(true))
             .addRoleOption(option => 
                 option.setName('rol')
-                    .setDescription('Kayıt ile ilgilenecek yetkili rolü')
+                    .setDescription('Kayıt ile ilgilenecek yetkili rolü (@kayıtsorumlusu)')
                     .setRequired(true))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
         const panelCommand = new SlashCommandBuilder()
             .setName('panel')
-            .setDescription('Giriş kanalına kayıt talep butonunu gönderir.')
+            .setDescription('Giriş kanalına sabit kayıt talep butonunu gönderir.')
             .addChannelOption(option =>
                 option.setName('kanal')
                     .setDescription('Butonun gönderileceği giriş kanalı')
@@ -48,7 +48,6 @@ module.exports = (client) => {
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand()) return;
 
-        // Komut çalıştırma güvenliği: Sadece Administrator yetkisine sahip olanlar komut çalıştırabilir
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: '❌ Bu komutu kullanmak için Yönetici yetkisine sahip olmalısın.', ephemeral: true });
         }
@@ -68,7 +67,7 @@ module.exports = (client) => {
             saveSettings(settings);
 
             await interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kanalı: ${channel}\n🛡️ Yetkili Rol: ${role}`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Bildirim Kanalı: ${channel}\n🛡️ Yetkili Rol: ${role}`,
                 ephemeral: true
             });
         }
@@ -111,37 +110,38 @@ module.exports = (client) => {
 
         if (interaction.customId === 'kayit_talep_et') {
             if (!guildSettings) {
-                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış!', ephemeral: true });
+                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış! Lütfen yöneticiden /setup komutunu çalıştırmasını isteyin.', ephemeral: true });
             }
 
-            // 1. Rate Limit (Timeout / Üst üste tıklama koruması)
             const userId = interaction.user.id;
             const now = Date.now();
+
+            // Timeout / Bekleme Süresi Kontrolü (Spam Önleme)
             if (cooldowns.has(userId)) {
                 const expirationTime = cooldowns.get(userId) + (COOLDOWN_SECONDS * 1000);
                 if (now < expirationTime) {
                     const timeLeft = Math.ceil((expirationTime - now) / 1000);
                     return interaction.reply({ 
-                        content: `⏳ Çok hızlı işlem yaptınız! Lütfen tekrar denemek için **${timeLeft}** saniye bekleyin.`, 
+                        content: `⏳ Çok sık kayıt talebinde bulunuyorsunuz! Lütfen yeni bir talep açmak için **${timeLeft}** saniye bekleyin.`, 
                         ephemeral: true 
                     });
                 }
             }
-            cooldowns.set(userId, now);
-            setTimeout(() => cooldowns.delete(userId), COOLDOWN_SECONDS * 1000);
 
-            await interaction.reply({ content: 'Kayıt talebiniz alındı, yetkililere haber veriliyor...', ephemeral: true });
+            // Süre dolduysa veya ilk kez açıyorsa süreyi güncelle
+            cooldowns.set(userId, now);
+
+            await interaction.reply({ content: '✅ Kayıt talebiniz başarıyla oluşturuldu ve yetkili ekibe iletildi.', ephemeral: true });
 
             const guild = interaction.guild;
             const logChannel = guild.channels.cache.get(guildSettings.channelId);
             const yetkiliRol = guild.roles.cache.get(guildSettings.roleId);
 
             if (!logChannel || !yetkiliRol) {
-                return interaction.followUp({ content: 'Hata: Ayarlanan kanal veya rol artık sunucuda bulunmuyor!', ephemeral: true });
+                return;
             }
 
-            // 2. Çevrim içi (Online, DND, Idle) olan yetkilileri filtreleme
-            // presences.cache kullanabilmek için botun "Server Members Intent" ve "Presence Intent" yetkilerinin açık olması gerekir.
+            // Aktif çevrim içi yetkilileri filtreleme ve DM bildirimi
             const aktifYetkililer = yetkiliRol.members.filter(member => {
                 const status = member.presence?.status;
                 return status && status !== 'offline';
@@ -149,32 +149,32 @@ module.exports = (client) => {
 
             const aldimButonu = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`kayit_al_${interaction.user.id}`)
+                    .setCustomId(`kayit_al_${userId}`)
                     .setLabel('Kaydı Devral')
                     .setStyle(ButtonStyle.Success)
             );
 
             const embed = new EmbedBuilder()
                 .setTitle('🔔 Yeni Kayıt / Destek Talebi!')
-                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\nDurum: Çevrim içi yetkililere özelden bildirildi.`)
+                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\nDurum: Yetkili ekibe ve online yetkililere bildirildi.`)
                 .setColor('#17161E')
                 .setTimestamp();
 
-            // Log kanalına mesaj at
+            // Bildirimi sadece belirlenen log / yetkili kanalına gönder (giriş kanalında kirlilik yaratmaz)
             await logChannel.send({
                 content: `${yetkiliRol}, yeni bir kayıt talebi var!`,
                 embeds: [embed],
                 components: [aldimButonu]
             });
 
-            // 3. Çevrim içi olan yetkililere özelden (DM) bildirim gönderme
+            // Online olan yetkililere özelden (DM) haber ver
             aktifYetkililer.forEach(async (yetkili) => {
                 try {
                     await yetkili.send({
                         content: `🔔 **${guild.name}** sunucusunda çevrim içi olduğunuz için yeni bir kayıt talebi düştü!\nKullanıcı: **${interaction.user.tag}**`
                     });
                 } catch (err) {
-                    // Kullanıcının DM'leri kapalıysa hata patlamasını önle
+                    // Kullanıcının DM'leri kapalıysa hatayı yut
                 }
             });
         }
@@ -184,7 +184,7 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Sunucu ayarları bulunamadı.', ephemeral: true });
             }
 
-            // 4. Yetki Güvenliği Kontrolü: Sadece yetkili rolü veya Adminler basabilir
+            // Yetki Güvenliği Kontrolü: Sadece yetkili rolüne sahip olanlar veya Adminler devralabilir
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -192,9 +192,9 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Bu butonu yalnızca kayıt yetkilileri kullanabilir!', ephemeral: true });
             }
 
+            // Butona basıldığında mesajı güncelleyerek diğer yetkililerin ekranında butonları devre dışı bırak
             await interaction.update({
                 content: `✅ Bu kayıt süreci ${interaction.user} tarafından devralındı!`,
-                embeds: [],
                 components: []
             });
         }
