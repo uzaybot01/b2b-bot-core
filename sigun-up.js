@@ -18,7 +18,7 @@ function saveSettings(data) {
 module.exports = (client) => {
     // 1. Komutları Discord'a kaydetme (Bot açıldığında çalışır)
     client.once('ready', async () => {
-        const data = new SlashCommandBuilder()
+        const setupCommand = new SlashCommandBuilder()
             .setName('setup')
             .setDescription('Kayıt botu kanal ve rol ayarlarını yapılandırır.')
             .addChannelOption(option => 
@@ -31,21 +31,33 @@ module.exports = (client) => {
                     .setRequired(true))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-        // Komutu tüm sunuculara global olarak kaydet
-        await client.application.commands.create(data);
+        const panelCommand = new SlashCommandBuilder()
+            .setName('panel')
+            .setDescription('Giriş kanalına kayıt talep butonunu gönderir.')
+            .addChannelOption(option =>
+                option.setName('kanal')
+                    .setDescription('Butonun gönderileceği giriş kanalı')
+                    .setRequired(true))
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
+        // Komutları kaydet
+        await client.application.commands.create(setupCommand);
+        await client.application.commands.create(panelCommand);
     });
 
-    // 2. /setup komutu çalıştırıldığında
+    // 2. Slash Komutları Yönetimi (/setup ve /panel)
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand()) return;
 
+        const guildId = interaction.guild.id;
+
         if (interaction.commandName === 'setup') {
-            const guildId = interaction.guild.id;
             const channel = interaction.options.getChannel('kanal');
             const role = interaction.options.getRole('rol');
 
             const settings = getSettings();
             settings[guildId] = {
+                ...(settings[guildId] || {}),
                 channelId: channel.id,
                 roleId: role.id
             };
@@ -56,9 +68,37 @@ module.exports = (client) => {
                 ephemeral: true
             });
         }
+
+        if (interaction.commandName === 'panel') {
+            const targetChannel = interaction.options.getChannel('kanal');
+
+            const embed = new EmbedBuilder()
+                .setTitle('👋 Sunucumuza Hoş Geldiniz!')
+                .setDescription('Kayıt işlemlerinizi başlatmak ve yetkili ekibimize haber vermek için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.')
+                .setColor('#17161E')
+                .setTimestamp();
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('kayit_talep_et')
+                    .setLabel('Kayıt Talep Et')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('📥')
+            );
+
+            await targetChannel.send({
+                embeds: [embed],
+                components: [row]
+            });
+
+            await interaction.reply({
+                content: `✅ Kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
+                ephemeral: true
+            });
+        }
     });
 
-    // 3. Buton ve Kayıt İşlemleri (Dinamik Ayarlarla Çalışır)
+    // 3. Buton ve Kayıt İşlemleri
     client.on('interactionCreate', async interaction => {
         if (!interaction.isButton()) return;
 

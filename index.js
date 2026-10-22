@@ -14,6 +14,7 @@ const client = new Client({
 client.commands = new Collection();
 
 // Modülleri güncel dosya adlarına göre bağlıyoruz
+
 require('./allusermessage.js')(client);
 require('./sigun-up.js')(client); // Dosya adınla birebir aynı
 
