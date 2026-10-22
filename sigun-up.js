@@ -32,6 +32,16 @@ module.exports = (client) => {
                     .setRequired(true))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
+        const logCommand = new SlashCommandBuilder()
+            .setName('log')
+            .setDescription('Kayıt talep bildirimlerinin ve butonların gideceği log kanalını ayarlar.')
+            .addChannelOption(option =>
+                option.setName('kanal')
+                    .setDescription('Kayıt log metin kanalı')
+                    .addChannelTypes(ChannelType.GuildText)
+                    .setRequired(true))
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
         const panelCommand = new SlashCommandBuilder()
             .setName('panel')
             .setDescription('Giriş kanalına özel tasarımlı kayıt talep butonunu gönderir.')
@@ -55,8 +65,8 @@ module.exports = (client) => {
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
         try {
-            await client.application.commands.set([setupCommand, panelCommand]);
-            console.log('✅ Kayıt komutları başarıyla yüklendi!');
+            await client.application.commands.set([setupCommand, logCommand, panelCommand]);
+            console.log('✅ Kayıt komutları (setup, log, panel) başarıyla yüklendi!');
         } catch (error) {
             console.error('❌ Komutlar yüklenirken hata oluştu:', error);
         }
@@ -85,6 +95,22 @@ module.exports = (client) => {
 
             return interaction.reply({
                 content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**`,
+                flags: 64
+            });
+        }
+
+        if (interaction.commandName === 'log') {
+            const logChannel = interaction.options.getChannel('kanal');
+
+            const settings = getSettings();
+            settings[guildId] = {
+                ...(settings[guildId] || {}),
+                logChannelId: logChannel.id
+            };
+            saveSettings(settings);
+
+            return interaction.reply({
+                content: `✅ **Log Kanalı Ayarlandı!**\n📢 Kayıt Bildirim Kanalı: **${logChannel.name}**`,
                 flags: 64
             });
         }
@@ -135,8 +161,8 @@ module.exports = (client) => {
         if (interaction.customId === 'kayit_talep_et') {
             await interaction.reply({ content: '⏳ Kayıt talebiniz işleniyor, size özel oda hazırlanıyor...', flags: 64 }).catch(() => {});
 
-            if (!guildSettings || !guildSettings.categoryId) {
-                return interaction.editReply({ content: '❌ Bu sunucuda bot henüz tamamen yapılandırılmamış! Lütfen /setup komutunu çalıştırın.' }).catch(() => {});
+            if (!guildSettings || !guildSettings.categoryId || !guildSettings.logChannelId) {
+                return interaction.editReply({ content: '❌ Bu sunucuda bot eksik yapılandırılmış! Lütfen önce **/setup** ve **/log** komutlarını çalıştırın.' }).catch(() => {});
             }
 
             const userId = interaction.user.id;
@@ -159,9 +185,10 @@ module.exports = (client) => {
             const guild = interaction.guild;
             const category = guild.channels.cache.get(guildSettings.categoryId);
             const yetkiliRol = guild.roles.cache.get(guildSettings.roleId);
+            const logKanali = guild.channels.cache.get(guildSettings.logChannelId);
 
-            if (!category || !yetkiliRol) {
-                return interaction.editReply({ content: '❌ Ayarlanan kategori veya yetkili rolü bulunamadı! Lütfen tekrar /setup yapın.' }).catch(() => {});
+            if (!category || !yetkiliRol || !logKanali) {
+                return interaction.editReply({ content: '❌ Ayarlanan kategori, rol veya log kanalı bulunamadı! Lütfen ayarları kontrol edin.' }).catch(() => {});
             }
 
             try {
@@ -217,14 +244,10 @@ module.exports = (client) => {
                     .setColor('#17161E')
                     .setTimestamp();
 
-                aktifYetkililer.forEach(async (yetkili) => {
-                    try {
-                        await yetkili.send({
-                            content: `🔔 **${guild.name}** sunucusunda ${interaction.user.tag} için kişiye özel kayıt odası açıldı: <#${privateChannel.id}>`,
-                            embeds: [yetkiliEmbed],
-                            components: [aldimButonu]
-                        });
-                    } catch (err) {}
+                await logKanali.send({
+                    content: `🔔 ${yetkiliRol}, yeni bir kayıt talebi açıldı!`,
+                    embeds: [yetkiliEmbed],
+                    components: [aldimButonu]
                 });
 
             } catch (error) {
@@ -294,6 +317,7 @@ module.exports = (client) => {
             if (targetChannel) {
                 await targetChannel.delete().catch(() => {});
             }
+            await interaction.message.delete().catch(() => {});
         }
 
         if (interaction.customId.startsWith('kayit_iptal_')) {
@@ -306,6 +330,7 @@ module.exports = (client) => {
             if (targetChannel) {
                 await targetChannel.delete().catch(() => {});
             }
+            await interaction.message.delete().catch(() => {});
         }
     });
 };
