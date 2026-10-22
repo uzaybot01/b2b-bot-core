@@ -1,19 +1,19 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-
-const settingsPath = path.join(__dirname, 'settings.json');
 
 const cooldowns = new Map();
 const COOLDOWN_SECONDS = 120; // 2 dakika timeout
+const DEFAULT_PANEL_TITLE = '🌟 Yeşilsancak Sunucumuza Hoş Geldiniz! 🌟';
+const DEFAULT_PANEL_DESCRIPTION = 'Kayıt işlemlerinizi başlatmak ve kişiye özel kayıt odanızı oluşturmak için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.';
+const DEFAULT_WELCOME_TITLE = '👋 Kayıt Odasına Hoş Geldiniz';
+const DEFAULT_WELCOME_DESCRIPTION = 'Merhaba {user},\nYetkili ekibimiz çağrınızı aldı, birazdan sizinle ilgilenecekler. Bu kanal üzerinden yazışarak ya da sesli olarak görüşebilirsiniz.';
 
-function getSettings() {
-    if (!fs.existsSync(settingsPath)) fs.writeFileSync(settingsPath, '{}');
-    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-}
-
-function saveSettings(data) {
-    fs.writeFileSync(settingsPath, JSON.stringify(data, null, 4));
+function isValidImageUrl(value) {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' || url.protocol === 'http:';
+    } catch {
+        return false;
+    }
 }
 
 module.exports = (client) => {
@@ -59,8 +59,37 @@ module.exports = (client) => {
                     .setDescription('Panel açıklama metni')
                     .setRequired(false))
             .addStringOption(option =>
+                option.setName('buton_yazi')
+                    .setDescription('Buton üzerinde görünecek yazı')
+                    .setMaxLength(80)
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('buton_renk')
+                    .setDescription('Buton rengi')
+                    .addChoices(
+                        { name: 'Mavi (Primary)', value: 'primary' },
+                        { name: 'Yeşil (Success)', value: 'success' },
+                        { name: 'Kırmızı (Danger)', value: 'danger' },
+                        { name: 'Gri (Secondary)', value: 'secondary' }
+                    )
+                    .setRequired(false))
+            .addStringOption(option =>
                 option.setName('gorsel')
-                    .setDescription('Logo veya GIF bağlantısı (URL linki)')
+                    .setDescription('Panel görseli URL’si; boş bırakılırsa sunucu logosu kullanılır')
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('oda_baslik')
+                    .setDescription('Kayıt odasındaki karşılama mesajının başlığı')
+                    .setMaxLength(256)
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('oda_aciklama')
+                    .setDescription('Karşılama mesajı; kullanıcıyı etiketlemek için {user} yazın')
+                    .setMaxLength(4096)
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('oda_gorsel')
+                    .setDescription('Kayıt odası karşılama görseli URL’si; boş bırakılırsa sunucu logosu kullanılır')
                     .setRequired(false))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
@@ -85,13 +114,13 @@ module.exports = (client) => {
             const category = interaction.options.getChannel('kategori');
             const role = interaction.options.getRole('rol');
 
-            const settings = getSettings();
+            const settings = client.settings.getSettings();
             settings[guildId] = {
                 ...(settings[guildId] || {}),
                 categoryId: category.id,
                 roleId: role.id
             };
-            saveSettings(settings);
+            client.settings.saveSettings(settings);
 
             return interaction.reply({
                 content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**`,
@@ -102,12 +131,12 @@ module.exports = (client) => {
         if (interaction.commandName === 'log') {
             const logChannel = interaction.options.getChannel('kanal');
 
-            const settings = getSettings();
+            const settings = client.settings.getSettings();
             settings[guildId] = {
                 ...(settings[guildId] || {}),
                 logChannelId: logChannel.id
             };
-            saveSettings(settings);
+            client.settings.saveSettings(settings);
 
             return interaction.reply({
                 content: `✅ **Log Kanalı Ayarlandı!**\n📢 Kayıt Bildirim Kanalı: **${logChannel.name}**`,
@@ -117,9 +146,33 @@ module.exports = (client) => {
 
         if (interaction.commandName === 'panel') {
             const targetChannel = interaction.options.getChannel('kanal');
-            const baslik = interaction.options.getString('baslik') || '🌟 Yeşilsancak Sunucumuza Hoş Geldiniz! 🌟';
-            const aciklama = interaction.options.getString('aciklama') || 'Kayıt işlemlerinizi başlatmak ve kişiye özel kayıt odanızı oluşturmak için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.';
-            const gorsel = interaction.options.getString('gorsel');
+            const baslik = interaction.options.getString('baslik') || DEFAULT_PANEL_TITLE;
+            const aciklama = interaction.options.getString('aciklama') || DEFAULT_PANEL_DESCRIPTION;
+            const buttonLabel = interaction.options.getString('buton_yazi') || 'Kayıt Talep Et';
+            const buttonStyleName = interaction.options.getString('buton_renk') || 'primary';
+            const panelImage = interaction.options.getString('gorsel');
+            const welcomeTitle = interaction.options.getString('oda_baslik');
+            const welcomeDescription = interaction.options.getString('oda_aciklama');
+            const welcomeImage = interaction.options.getString('oda_gorsel');
+
+            const settings = client.settings.getSettings();
+            const guildSettings = settings[guildId] || {};
+            const panelImageUrl = panelImage || guildSettings.customLogo;
+            const welcomeImageUrl = welcomeImage || guildSettings.welcomeImage || guildSettings.customLogo;
+
+            if (panelImageUrl && !isValidImageUrl(panelImageUrl)) {
+                return interaction.reply({ content: '❌ Panel görseli için geçerli bir HTTP veya HTTPS URL’si girin.', flags: 64 });
+            }
+
+            if (welcomeImageUrl && !isValidImageUrl(welcomeImageUrl)) {
+                return interaction.reply({ content: '❌ Oda görseli veya sunucu logosu geçerli bir HTTP ya da HTTPS URL’si olmalıdır.', flags: 64 });
+            }
+
+            guildSettings.welcomeTitle = welcomeTitle || guildSettings.welcomeTitle || DEFAULT_WELCOME_TITLE;
+            guildSettings.welcomeDescription = welcomeDescription || guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION;
+            if (welcomeImage) {
+                guildSettings.welcomeImage = welcomeImage;
+            }
 
             const embed = new EmbedBuilder()
                 .setTitle(baslik)
@@ -127,16 +180,15 @@ module.exports = (client) => {
                 .setColor('#17161E')
                 .setTimestamp();
 
-            if (gorsel) {
-                embed.setImage(gorsel);
+            if (panelImageUrl) {
+                embed.setImage(panelImageUrl);
             }
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('kayit_talep_et')
-                    .setLabel('Kayıt Talep Et')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('📥')
+                    .setLabel(buttonLabel)
+                    .setStyle(ButtonStyle[buttonStyleName.charAt(0).toUpperCase() + buttonStyleName.slice(1)])
             );
 
             await targetChannel.send({
@@ -144,8 +196,11 @@ module.exports = (client) => {
                 components: [row]
             });
 
+            settings[guildId] = guildSettings;
+            client.settings.saveSettings(settings);
+
             return interaction.reply({
-                content: `✅ Kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
+                content: `✅ Kayıt paneli başarıyla ${targetChannel} kanalına gönderildi. Oda karşılama ayarları da sunucuya kaydedildi!`,
                 flags: 64
             });
         }
@@ -155,7 +210,7 @@ module.exports = (client) => {
         if (!interaction.isButton()) return;
 
         const guildId = interaction.guild.id;
-        const settings = getSettings();
+        const settings = client.settings.getSettings();
         const guildSettings = settings[guildId];
 
         if (interaction.customId === 'kayit_talep_et') {
@@ -218,11 +273,18 @@ module.exports = (client) => {
 
                 await interaction.editReply({ content: `✅ Size özel kayıt odası başarıyla oluşturuldu: ${privateChannel}` }).catch(() => {});
 
+                const welcomeDescription = (guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION)
+                    .replaceAll('{user}', `${interaction.user}`);
                 const uyeEmbed = new EmbedBuilder()
-                    .setTitle('👋 Kayıt Odasına Hoş Geldiniz')
-                    .setDescription(`Merhaba ${interaction.user},\nYetkili ekibimiz çağrınızı aldı, birazdan sizinle ilgilenecekler. Bu kanal üzerinden yazışarak ya da sesli olarak görüşebilirsiniz.`)
+                    .setTitle(guildSettings.welcomeTitle || DEFAULT_WELCOME_TITLE)
+                    .setDescription(welcomeDescription)
                     .setColor('#17161E')
                     .setTimestamp();
+
+                const welcomeImage = guildSettings.welcomeImage || guildSettings.customLogo;
+                if (welcomeImage) {
+                    uyeEmbed.setImage(welcomeImage);
+                }
 
                 await privateChannel.send({ embeds: [uyeEmbed] });
 
