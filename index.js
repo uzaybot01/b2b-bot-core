@@ -35,6 +35,10 @@ for (const file of commandFiles) {
 }
 
 client.once('ready', async () => {
+    client.voice.connectConfiguredVoiceChannels(client).catch(error => {
+        console.error('Sunucuların sabit ses kanalı ayarları yüklenemedi:', error);
+    });
+
     try {
         const commands = [...client.commands.values()].map(command => command.toJSON());
         await client.application.commands.set(commands);

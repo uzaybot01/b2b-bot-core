@@ -16,8 +16,8 @@ module.exports = client => {
             description: 'Yönetim komutları sunucu yöneticileri tarafından kullanılabilir.'
         }).addFields(
             {
-                name: '/setup `<kategori>` `<rol>`',
-                value: 'Kayıt odalarının açılacağı kategoriyi ve kayıt yetkilisi rolünü ayarlar.'
+                name: '/setup `<kategori>` `<rol>` `[ses_kanali]`',
+                value: 'Kayıt kategorisini ve yetkili rolünü ayarlar; isteğe bağlı ses kanalı botun o sunucudaki sabit bağlantı yeridir.'
             },
             {
                 name: '/log `<kanal>`',
@@ -26,6 +26,10 @@ module.exports = client => {
             {
                 name: '/panel `<kanal>`',
                 value: 'Kayıt panelini gönderir; başlık, açıklama, buton, görsel ve oda karşılama metnini özelleştirir.'
+            },
+            {
+                name: 'Kayıt süresi',
+                value: 'Yetkili bir talebi devralınca 2 dakikalık geri sayım başlar. Süre dolarsa talep zaman aşımıyla iptal edilir ve oda bilgilendirilir.'
             },
             {
                 name: '/bot-ayar `<logo>`',

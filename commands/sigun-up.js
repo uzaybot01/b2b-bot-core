@@ -1,6 +1,7 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
 const { isValidHttpUrl } = require('../utils/validation');
+const { startRegistrationTimeout } = require('../utils/registration-timeout');
 
 const cooldowns = new Map();
 const COOLDOWN_SECONDS = 120; // 2 dakika timeout
@@ -22,6 +23,11 @@ module.exports = (client) => {
             option.setName('rol')
                 .setDescription('Kayıt ile ilgilenecek yetkili rolü (@kayıtsorumlusu)')
                 .setRequired(true))
+        .addChannelOption(option =>
+            option.setName('ses_kanali')
+                .setDescription('Botun bu sunucuda sabit bağlanacağı ses kanalı')
+                .addChannelTypes(ChannelType.GuildVoice)
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
     const logCommand = new SlashCommandBuilder()
@@ -101,14 +107,26 @@ module.exports = (client) => {
         if (interaction.commandName === 'setup') {
             const category = interaction.options.getChannel('kategori');
             const role = interaction.options.getRole('rol');
+            const voiceChannel = interaction.options.getChannel('ses_kanali');
 
             client.settings.updateGuildSettings(guildId, {
                 categoryId: category.id,
-                roleId: role.id
+                roleId: role.id,
+                ...(voiceChannel ? { voiceChannelId: voiceChannel.id } : {})
             });
 
+            if (voiceChannel) {
+                client.voice.connectPersistentVoiceChannelById(client, voiceChannel.id)
+                    .then(() => {
+                        console.log(`Sunucu sabit ses kanalına bağlandı: ${interaction.guild.name} / ${voiceChannel.name}`);
+                    })
+                    .catch(error => {
+                        console.error(`Sunucu sabit ses kanalına bağlanılamadı (${interaction.guild.name}):`, error);
+                    });
+            }
+
             return interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**${voiceChannel ? `\n🔊 Sabit ses kanalı: **${voiceChannel.name}**` : ''}`,
                 flags: 64
             });
         }
@@ -250,8 +268,8 @@ module.exports = (client) => {
                 let voiceNotice = '';
                 if (interaction.member.voice.channel) {
                     try {
-                        await client.voice.joinMemberVoiceChannel(interaction.member);
-                        voiceNotice = '\n🔊 Bot ses kanalınıza bağlandı.';
+                        const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
+                        voiceNotice = `\n🔊 Bot ${voiceChannel} ses kanalında bağlı.`;
                     } catch (error) {
                         console.error('Kayıt talebi sırasında ses kanalına bağlanılamadı:', error);
                         voiceNotice = '\n⚠️ Bot ses kanalına bağlanamadı. Ses kanalı izinlerini kontrol edin.';
@@ -288,7 +306,7 @@ module.exports = (client) => {
                 const yetkiliEmbed = createEmbed({
                     title: '🔔 Yeni Kişiye Özel Kayıt Talebi!',
                     description: `**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Oda:** ${privateChannel}\n**Durum:** Beklemede (Devralınmadı)\nÇevrim içi yetkili sayısı: **${aktifYetkililer.size}**`
-                });
+                }).setFooter({ text: `ticket-channel:${privateChannel.id}` });
 
                 await logKanali.send({
                     content: `🔔 ${yetkiliRol}, yeni bir kayıt talebi açıldı!`,
@@ -317,17 +335,16 @@ module.exports = (client) => {
             }
 
             const targetUserId = interaction.customId.split('_')[2];
+            const claimStartedAt = Date.now();
             let voiceNotice = '';
-            if (interaction.member.voice.channel) {
-                try {
-                    const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
-                    voiceNotice = ` Bot, bulunduğunuz ${voiceChannel} ses kanalına bağlandı.`;
-                } catch (error) {
-                    console.error('Kayıt devralınırken ses kanalına bağlanılamadı:', error);
-                    voiceNotice = ' Bot ses kanalına bağlanamadı; kanal izinlerini kontrol edin.';
-                }
-            } else {
-                voiceNotice = ' Bir ses kanalında olmadığınız için bot ses bağlantısı kuramadı.';
+            try {
+                const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
+                voiceNotice = voiceChannel
+                    ? ` Bot ${voiceChannel} ses kanalında bağlı.`
+                    : ' Bir ses kanalında olmadığınız ve sabit ses kanalı ayarlanmadığı için bot ses bağlantısı kuramadı.';
+            } catch (error) {
+                console.error('Kayıt devralınırken ses kanalına bağlanılamadı:', error);
+                voiceNotice = ' Bot ses kanalına bağlanamadı; kanal izinlerini kontrol edin.';
             }
 
             const sonucButonlari = new ActionRowBuilder().addComponents(
@@ -348,14 +365,37 @@ module.exports = (client) => {
                 .setDescription(oldEmbed.description.replace('Durum: Beklemede (Devralınmadı)', `Durum: İşlem Devralındı (${interaction.user.tag})`))
                 .setColor('#5865F2');
 
-            await interaction.message.edit({
+            const claimedMessage = await interaction.message.edit({
                 content: `📌 Bu kayıt süreci ${interaction.user} tarafından yürütülüyor. Sonucu seçin:${voiceNotice}`,
                 embeds: [updatedEmbed],
                 components: [sonucButonlari]
-            }).catch(() => {});
+            }).catch(error => {
+                console.error('Kayıt devralma paneli güncellenemedi:', error);
+                return null;
+            });
+            if (!claimedMessage) return;
+
+            const ticketChannelId = claimedMessage.embeds[0]?.footer?.text
+                ?.match(/(?:^|;)ticket-channel:(\d+)(?:;|$)/)?.[1];
+            const ticketChannel = ticketChannelId
+                ? await interaction.guild.channels.fetch(ticketChannelId).catch(error => {
+                    console.error('Kayıt odası bulunamadı; zaman aşımı bildirimi log kanalına gönderilecek:', error);
+                    return null;
+                })
+                : null;
+
+            startRegistrationTimeout({
+                client,
+                message: claimedMessage,
+                ticketChannel,
+                user: targetUserId,
+                timeoutMs: 120_000,
+                startedAt: claimStartedAt
+            });
         }
 
         if (interaction.customId.startsWith('kayit_basarili_')) {
+            interaction.client.registrationTimeouts?.get(interaction.message.id)?.stop('resolved');
             await interaction.reply({ content: `✅ Kayıt başarıyla tamamlandı, kanal kapatılıyor...`, flags: 64 }).catch(() => {});
             
             const targetUserId = interaction.customId.split('_')[2];
@@ -369,6 +409,7 @@ module.exports = (client) => {
         }
 
         if (interaction.customId.startsWith('kayit_iptal_')) {
+            interaction.client.registrationTimeouts?.get(interaction.message.id)?.stop('resolved');
             await interaction.reply({ content: `❌ Kayıt iptal edildi, kanal kapatılıyor...`, flags: 64 }).catch(() => {});
             
             const targetUserId = interaction.customId.split('_')[2];
