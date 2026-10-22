@@ -287,9 +287,10 @@ async function connectConfiguredVoiceChannelForGuild(client, guild) {
 
 async function joinMemberVoiceChannel(member) {
     const guildId = member?.guild?.id || member?.voice?.channel?.guild?.id;
-    const configuredChannelId = member?.guild?.client?.settings?.getGuildSettings(guildId)?.voiceChannelId;
-    if (configuredChannelId && member.guild.client.voice) {
-        return connectPersistentVoiceChannelById(member.guild.client, configuredChannelId);
+    const client = member?.client || member?.guild?.client;
+    const configuredChannelId = client?.settings?.getGuildSettings(guildId)?.voiceChannelId;
+    if (configuredChannelId && client.voiceService) {
+        return connectPersistentVoiceChannelById(client, configuredChannelId);
     }
 
     const persistentState = guildId ? persistentConnections.get(guildId) : null;

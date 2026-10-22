@@ -116,7 +116,7 @@ module.exports = (client) => {
             });
 
             if (voiceChannel) {
-                client.voice.connectPersistentVoiceChannelById(client, voiceChannel.id)
+                client.voiceService.connectPersistentVoiceChannelById(client, voiceChannel.id)
                     .then(() => {
                         console.log(`Sunucu sabit ses kanalına bağlandı: ${interaction.guild.name} / ${voiceChannel.name}`);
                     })
@@ -268,7 +268,7 @@ module.exports = (client) => {
                 let voiceNotice = '';
                 if (interaction.member.voice.channel) {
                     try {
-                        const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
+                        const voiceChannel = await client.voiceService.joinMemberVoiceChannel(interaction.member);
                         voiceNotice = `\n🔊 Bot ${voiceChannel} ses kanalında bağlı.`;
                     } catch (error) {
                         console.error('Kayıt talebi sırasında ses kanalına bağlanılamadı:', error);
@@ -338,7 +338,7 @@ module.exports = (client) => {
             const claimStartedAt = Date.now();
             let voiceNotice = '';
             try {
-                const voiceChannel = await client.voice.joinMemberVoiceChannel(interaction.member);
+                const voiceChannel = await client.voiceService.joinMemberVoiceChannel(interaction.member);
                 voiceNotice = voiceChannel
                     ? ` Bot ${voiceChannel} ses kanalında bağlı.`
                     : ' Bir ses kanalında olmadığınız ve sabit ses kanalı ayarlanmadığı için bot ses bağlantısı kuramadı.';

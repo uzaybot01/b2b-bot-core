@@ -15,7 +15,7 @@ const client = new Client({
 
 client.commands = new Collection();
 client.settings = require('./utils/settings');
-client.voice = require('./utils/voice');
+client.voiceService = require('./utils/voice');
 
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath)
@@ -35,7 +35,7 @@ for (const file of commandFiles) {
 }
 
 client.once('ready', async () => {
-    client.voice.connectConfiguredVoiceChannels(client).catch(error => {
+    client.voiceService.connectConfiguredVoiceChannels(client).catch(error => {
         console.error('Sunucuların sabit ses kanalı ayarları yüklenemedi:', error);
     });
 
@@ -51,7 +51,7 @@ client.once('ready', async () => {
 });
 
 client.on('guildCreate', guild => {
-    client.voice.connectConfiguredVoiceChannelForGuild(client, guild).catch(error => {
+    client.voiceService.connectConfiguredVoiceChannelForGuild(client, guild).catch(error => {
         console.error(`Yeni sunucunun sabit ses ayarı yüklenemedi (${guild.id}):`, error);
     });
 });
