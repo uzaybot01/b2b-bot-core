@@ -165,7 +165,7 @@ module.exports = (client) => {
             }
 
             try {
-                // Kanal izinleri: Üye sadece okuyup yazabilir, yetkili ve bot tam erişebilir.
+                // Üyeye özel kanal oluşturma
                 const privateChannel = await guild.channels.create({
                     name: `kayıt-${interaction.user.username}`,
                     type: ChannelType.GuildText,
@@ -192,7 +192,7 @@ module.exports = (client) => {
 
                 await interaction.editReply({ content: `✅ Size özel kayıt odası başarıyla oluşturuldu: ${privateChannel}` }).catch(() => {});
 
-                // 1. MESAJ: Sadece üyeye özel karşılama mesajı (İÇİNDE BUTON YOK)
+                // Üyenin kanalına sadece bilgilendirme mesajı atılır (İçinde buton YOK)
                 const uyeEmbed = new EmbedBuilder()
                     .setTitle('👋 Kayıt Odasına Hoş Geldiniz')
                     .setDescription(`Merhaba ${interaction.user},\nYetkili ekibimiz çağrınızı aldı, birazdan sizinle ilgilenecekler. Bu kanal üzerinden yazışarak ya da sesli olarak görüşebilirsiniz.`)
@@ -213,25 +213,23 @@ module.exports = (client) => {
                         .setStyle(ButtonStyle.Success)
                 );
 
-                // 2. MESAJ: İçinde "Kaydı Devral" butonu olan yetkili paneli
                 const yetkiliEmbed = new EmbedBuilder()
-                    .setTitle('🔔 Yetkili Yönetim Paneli')
-                    .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Durum:** Beklemede (Devralınmadı)\nÇevrim içi yetkili sayısı: **${aktifYetkililer.size}**`)
+                    .setTitle('🔔 Yeni Kişiye Özel Kayıt Talebi!')
+                    .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Oda:** ${privateChannel}\n**Durum:** Beklemede (Devralınmadı)\nÇevrim içi yetkili sayısı: **${aktifYetkililer.size}**`)
                     .setColor('#17161E')
                     .setTimestamp();
 
-                await privateChannel.send({
-                    content: `${yetkiliRol}, yeni bir kayıt talebi açıldı!`,
-                    embeds: [yetkiliEmbed],
-                    components: [aldimButonu]
-                });
-
+                // Çevrim içi olan tüm yetkililere özel mesaj (DM) ile "Kaydı Devral" butonu gönderilir
                 aktifYetkililer.forEach(async (yetkili) => {
                     try {
                         await yetkili.send({
-                            content: `🔔 **${guild.name}** sunucusunda ${interaction.user.tag} için kişiye özel kayıt odası açıldı: <#${privateChannel.id}>`
+                            content: `🔔 **${guild.name}** sunucusunda ${interaction.user.tag} için kişiye özel kayıt odası açıldı: <#${privateChannel.id}>`,
+                            embeds: [yetkiliEmbed],
+                            components: [aldimButonu]
                         });
-                    } catch (err) {}
+                    } catch (err) {
+                        // Eğer yetkilinin DM'si kapalıysa alternatif olarak odaya bilgilendirme atılabilir ama DM en temizidir.
+                    }
                 });
 
             } catch (error) {
@@ -279,9 +277,10 @@ module.exports = (client) => {
                     .setEmoji('❌')
             );
 
+            // Yetkiliye giden DM mesajını güncelliyoruz
             const oldEmbed = interaction.message.embeds[0];
             const updatedEmbed = EmbedBuilder.from(oldEmbed)
-                .setDescription(`**Kullanıcı:** <@${targetUserId}>\n**İşlem Sorumlusu:** ${interaction.user}\n**Durum:** İşlem Devralındı (Görüşülüyor)`)
+                .setDescription(oldEmbed.description.replace('Durum: Beklemede (Devralınmadı)', `Durum: İşlem Devralındı (${interaction.user.tag})`))
                 .setColor('#5865F2');
 
             await interaction.message.edit({
@@ -299,11 +298,17 @@ module.exports = (client) => {
                 return interaction.editReply({ content: '❌ Bu işlem için yetkiniz yok!' });
             }
 
-            await interaction.editReply({ content: `✅ Kayıt başarıyla tamamlandı. Bu kanal 5 saniye içinde kapatılacaktır.` });
+            const targetUserId = interaction.customId.split('_')[2];
+            const guild = interaction.guild;
+            const category = guild.channels.cache.get(guildSettings.categoryId);
             
-            setTimeout(async () => {
-                await interaction.channel.delete().catch(() => {});
-            }, 5000);
+            // Üyenin açtığı özel kanalı bulup siliyoruz
+            const targetChannel = guild.channels.cache.find(c => c.name === `kayıt-${guild.members.cache.get(targetUserId)?.user.username}`);
+            if (targetChannel) {
+                await targetChannel.delete().catch(() => {});
+            }
+
+            await interaction.editReply({ content: `✅ Kayıt başarıyla tamamlandı, kanal kapatıldı.` });
         }
 
         if (interaction.customId.startsWith('kayit_iptal_')) {
@@ -314,11 +319,15 @@ module.exports = (client) => {
                 return interaction.editReply({ content: '❌ Bu işlem için yetkiniz yok!' });
             }
 
-            await interaction.editReply({ content: `❌ Kayıt iptal edildi. Bu kanal 5 saniye içinde kapatılacaktır.` });
+            const targetUserId = interaction.customId.split('_')[2];
+            const guild = interaction.guild;
             
-            setTimeout(async () => {
-                await interaction.channel.delete().catch(() => {});
-            }, 5000);
+            const targetChannel = guild.channels.cache.find(c => c.name === `kayıt-${guild.members.cache.get(targetUserId)?.user.username}`);
+            if (targetChannel) {
+                await targetChannel.delete().catch(() => {});
+            }
+
+            await interaction.editReply({ content: `❌ Kayıt iptal edildi, kanal kapatıldı.` });
         }
     });
 };
