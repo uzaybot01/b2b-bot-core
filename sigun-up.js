@@ -33,11 +33,23 @@ module.exports = (client) => {
 
         const panelCommand = new SlashCommandBuilder()
             .setName('panel')
-            .setDescription('Giriş kanalına sabit kayıt talep butonunu gönderir.')
+            .setDescription('Giriş kanalına özel tasarımlı kayıt talep butonunu gönderir.')
             .addChannelOption(option =>
                 option.setName('kanal')
                     .setDescription('Butonun gönderileceği giriş kanalı')
                     .setRequired(true))
+            .addStringOption(option =>
+                option.setName('baslik')
+                    .setDescription('Embed başlığı (Örn: 🌟 Yeşilsancak Sunucumuza Hoş Geldiniz! 🌟)')
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('aciklama')
+                    .setDescription('Panel açıklama metni')
+                    .setRequired(false))
+            .addStringOption(option =>
+                option.setName('gorsel')
+                    .setDescription('Logo veya GIF bağlantısı (URL linki)')
+                    .setRequired(false))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
         await client.application.commands.create(setupCommand);
@@ -73,12 +85,19 @@ module.exports = (client) => {
 
         if (interaction.commandName === 'panel') {
             const targetChannel = interaction.options.getChannel('kanal');
+            const baslik = interaction.options.getString('baslik') || '🌟 Sunucumuza Hoş Geldiniz! 🌟';
+            const aciklama = interaction.options.getString('aciklama') || 'Kayıt işlemlerinizi başlatmak ve yetkili ekibimize haber vermek için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.';
+            const gorsel = interaction.options.getString('gorsel');
 
             const embed = new EmbedBuilder()
-                .setTitle('👋 Sunucumuza Hoş Geldiniz!')
-                .setDescription('Kayıt işlemlerinizi başlatmak ve yetkili ekibimize haber vermek için aşağıdaki **Kayıt Talep Et** butonuna tıklayabilirsiniz.')
+                .setTitle(baslik)
+                .setDescription(aciklama)
                 .setColor('#17161E')
                 .setTimestamp();
+
+            if (gorsel) {
+                embed.setImage(gorsel); // GIF veya resim ekleme desteği
+            }
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -94,7 +113,7 @@ module.exports = (client) => {
             });
 
             await interaction.reply({
-                content: `✅ Kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
+                content: `✅ Özel tasarımlı kayıt paneli başarıyla ${targetChannel} kanalına gönderildi!`,
                 ephemeral: true
             });
         }
@@ -162,12 +181,10 @@ module.exports = (client) => {
                 components: [aldimButonu]
             });
 
-            // 2 dakika boyunca kimse devralmazsa "İlgilenilmeyen" olarak işaretleme takibi
             setTimeout(async () => {
                 try {
                     const fetchedMsg = await logChannel.messages.fetch(sentMessage.id).catch(() => null);
                     if (fetchedMsg && fetchedMsg.components.length > 0) {
-                        // Hala buton duruyorsa ve devralınmadıysa
                         const oldEmbed = fetchedMsg.embeds[0];
                         const updatedEmbed = EmbedBuilder.from(oldEmbed)
                             .setDescription(oldEmbed.description.replace('Durum: Beklemede (İlgilenilmeyen)', 'Durum: ⚠️ **İlgilenilmedi (Süre Aşımı / Kimse Almadı)**'))
@@ -187,7 +204,6 @@ module.exports = (client) => {
             });
         }
 
-        // 1. Aşama: Kaydı Devral
         if (interaction.customId.startsWith('kayit_al_')) {
             if (!guildSettings || !guildSettings.roleId) {
                 return interaction.reply({ content: '❌ Sunucu ayarları bulunamadı.', ephemeral: true });
@@ -212,7 +228,6 @@ module.exports = (client) => {
                 }
             }
 
-            // Devralındıktan sonra Başarılı ve İptal butonlarını ekle
             const sonucButonlari = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId(`kayit_basarili_${targetUserId}`)
@@ -238,7 +253,6 @@ module.exports = (client) => {
             });
         }
 
-        // 2. Aşama: Başarılı Butonu
         if (interaction.customId.startsWith('kayit_basarili_')) {
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
@@ -259,7 +273,6 @@ module.exports = (client) => {
             });
         }
 
-        // 3. Aşama: İptal Butonu
         if (interaction.customId.startsWith('kayit_iptal_')) {
             const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
