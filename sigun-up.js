@@ -4,19 +4,20 @@ const path = require('path');
 
 const settingsPath = path.join(__dirname, 'settings.json');
 
-// Ayarları okuma fonksiyonu
+// Basit Rate Limit (Cooldown) Haritası: kullanıcı ID -> son işlem zamanı (ms)
+const cooldowns = new Map();
+const COOLDOWN_SECONDS = 5; // Üst üste tıklamaları engellemek için 5 saniye bekleme süresi
+
 function getSettings() {
     if (!fs.existsSync(settingsPath)) fs.writeFileSync(settingsPath, '{}');
     return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 }
 
-// Ayarları kaydetme fonksiyonu
 function saveSettings(data) {
     fs.writeFileSync(settingsPath, JSON.stringify(data, null, 4));
 }
 
 module.exports = (client) => {
-    // 1. Komutları Discord'a kaydetme (Bot açıldığında çalışır)
     client.once('ready', async () => {
         const setupCommand = new SlashCommandBuilder()
             .setName('setup')
@@ -40,14 +41,17 @@ module.exports = (client) => {
                     .setRequired(true))
             .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-        // Komutları kaydet
         await client.application.commands.create(setupCommand);
         await client.application.commands.create(panelCommand);
     });
 
-    // 2. Slash Komutları Yönetimi (/setup ve /panel)
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand()) return;
+
+        // Komut çalıştırma güvenliği: Sadece Administrator yetkisine sahip olanlar komut çalıştırabilir
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: '❌ Bu komutu kullanmak için Yönetici yetkisine sahip olmalısın.', ephemeral: true });
+        }
 
         const guildId = interaction.guild.id;
 
@@ -98,7 +102,6 @@ module.exports = (client) => {
         }
     });
 
-    // 3. Buton ve Kayıt İşlemleri
     client.on('interactionCreate', async interaction => {
         if (!interaction.isButton()) return;
 
@@ -108,8 +111,24 @@ module.exports = (client) => {
 
         if (interaction.customId === 'kayit_talep_et') {
             if (!guildSettings) {
-                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış! Lütfen bir yetkili `/setup` komutunu kullansın.', ephemeral: true });
+                return interaction.reply({ content: '❌ Bu sunucuda bot henüz yapılandırılmamış!', ephemeral: true });
             }
+
+            // 1. Rate Limit (Timeout / Üst üste tıklama koruması)
+            const userId = interaction.user.id;
+            const now = Date.now();
+            if (cooldowns.has(userId)) {
+                const expirationTime = cooldowns.get(userId) + (COOLDOWN_SECONDS * 1000);
+                if (now < expirationTime) {
+                    const timeLeft = Math.ceil((expirationTime - now) / 1000);
+                    return interaction.reply({ 
+                        content: `⏳ Çok hızlı işlem yaptınız! Lütfen tekrar denemek için **${timeLeft}** saniye bekleyin.`, 
+                        ephemeral: true 
+                    });
+                }
+            }
+            cooldowns.set(userId, now);
+            setTimeout(() => cooldowns.delete(userId), COOLDOWN_SECONDS * 1000);
 
             await interaction.reply({ content: 'Kayıt talebiniz alındı, yetkililere haber veriliyor...', ephemeral: true });
 
@@ -121,10 +140,12 @@ module.exports = (client) => {
                 return interaction.followUp({ content: 'Hata: Ayarlanan kanal veya rol artık sunucuda bulunmuyor!', ephemeral: true });
             }
 
-            const yetkililer = yetkiliRol.members.map(m => m);
-            if (yetkililer.length === 0) {
-                return interaction.followUp({ content: 'Şu anda bu role sahip aktif bir yetkili bulunmuyor.', ephemeral: true });
-            }
+            // 2. Çevrim içi (Online, DND, Idle) olan yetkilileri filtreleme
+            // presences.cache kullanabilmek için botun "Server Members Intent" ve "Presence Intent" yetkilerinin açık olması gerekir.
+            const aktifYetkililer = yetkiliRol.members.filter(member => {
+                const status = member.presence?.status;
+                return status && status !== 'offline';
+            });
 
             const aldimButonu = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -133,22 +154,44 @@ module.exports = (client) => {
                     .setStyle(ButtonStyle.Success)
             );
 
-            let secilenYetkili = yetkililer[0];
-
             const embed = new EmbedBuilder()
                 .setTitle('🔔 Yeni Kayıt / Destek Talebi!')
-                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\n**Sorumlu Yetkili:** ${secilenYetkili}`)
+                .setDescription(`**Kullanıcı:** ${interaction.user} (${interaction.user.tag})\nDurum: Çevrim içi yetkililere özelden bildirildi.`)
                 .setColor('#17161E')
                 .setTimestamp();
 
+            // Log kanalına mesaj at
             await logChannel.send({
-                content: `${secilenYetkili}, yeni bir kayıt talebi var!`,
+                content: `${yetkiliRol}, yeni bir kayıt talebi var!`,
                 embeds: [embed],
                 components: [aldimButonu]
+            });
+
+            // 3. Çevrim içi olan yetkililere özelden (DM) bildirim gönderme
+            aktifYetkililer.forEach(async (yetkili) => {
+                try {
+                    await yetkili.send({
+                        content: `🔔 **${guild.name}** sunucusunda çevrim içi olduğunuz için yeni bir kayıt talebi düştü!\nKullanıcı: **${interaction.user.tag}**`
+                    });
+                } catch (err) {
+                    // Kullanıcının DM'leri kapalıysa hata patlamasını önle
+                }
             });
         }
 
         if (interaction.customId.startsWith('kayit_al_')) {
+            if (!guildSettings || !guildSettings.roleId) {
+                return interaction.reply({ content: '❌ Sunucu ayarları bulunamadı.', ephemeral: true });
+            }
+
+            // 4. Yetki Güvenliği Kontrolü: Sadece yetkili rolü veya Adminler basabilir
+            const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
+            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+            if (!hasRole && !isAdmin) {
+                return interaction.reply({ content: '❌ Bu butonu yalnızca kayıt yetkilileri kullanabilir!', ephemeral: true });
+            }
+
             await interaction.update({
                 content: `✅ Bu kayıt süreci ${interaction.user} tarafından devralındı!`,
                 embeds: [],
