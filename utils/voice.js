@@ -7,9 +7,63 @@ const {
 const { ChannelType, PermissionsBitField } = require('discord.js');
 
 const persistentConnections = new Map();
+const initialConnectionRetries = new Map();
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const ADAPTER_READY_ATTEMPTS = 3;
 const ADAPTER_RETRY_DELAY_MS = 1_000;
+const GUILD_CACHE_ATTEMPTS = 5;
+const GUILD_CACHE_RETRY_DELAY_MS = 1_000;
+
+function delay(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function resolveGuild(client, guildId) {
+    if (!client || !guildId) {
+        throw new Error('Cannot connect to voice channel: client or guild ID is unavailable');
+    }
+
+    for (let attempt = 1; attempt <= GUILD_CACHE_ATTEMPTS; attempt += 1) {
+        const cachedGuild = client.guilds?.cache?.get(guildId);
+        if (cachedGuild && typeof cachedGuild.voiceAdapterCreator === 'function') {
+            return cachedGuild;
+        }
+
+        try {
+            const fetchedGuild = await client.guilds?.fetch(guildId);
+            const guild = client.guilds?.cache?.get(guildId) || fetchedGuild;
+            if (guild && typeof guild.voiceAdapterCreator === 'function') {
+                return guild;
+            }
+        } catch (error) {
+            console.warn(
+                `Guild ${guildId} is not ready for voice connection (attempt ${attempt}/${GUILD_CACHE_ATTEMPTS}): ${error.message}`
+            );
+        }
+
+        if (attempt < GUILD_CACHE_ATTEMPTS) {
+            await delay(GUILD_CACHE_RETRY_DELAY_MS);
+        }
+    }
+
+    throw new Error(`Guild ${guildId} or its voice adapter is unavailable after ${GUILD_CACHE_ATTEMPTS} attempts`);
+}
+
+function scheduleInitialConnectionRetry(client, channelId, error) {
+    if (initialConnectionRetries.has(channelId)) {
+        return;
+    }
+
+    console.error(`Voice connection to channel ${channelId} failed; retrying in 3 seconds:`, error);
+    const timer = setTimeout(() => {
+        initialConnectionRetries.delete(channelId);
+        connectPersistentVoiceChannelById(client, channelId).catch(retryError => {
+            scheduleInitialConnectionRetry(client, channelId, retryError);
+        });
+    }, 3_000);
+    timer.unref?.();
+    initialConnectionRetries.set(channelId, timer);
+}
 
 async function getVoiceAdapter(guild, channelId) {
     if (!guild || typeof guild.id !== 'string' || !guild.id) {
@@ -141,15 +195,30 @@ async function connectPersistentState(state) {
 }
 
 async function connectPersistentVoiceChannelById(client, channelId) {
-    const channel = await client.channels.fetch(channelId);
+    let channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
     if (!channel || channel.type !== ChannelType.GuildVoice) {
         throw new Error(`Configured voice channel ${channelId} was not found or is not a standard voice channel`);
     }
-    if (!channel.guild) {
-        throw new Error(`Configured voice channel ${channelId} does not have a guild available`);
+
+    const guildId = channel.guildId || channel.guild?.id;
+    if (!guildId) {
+        throw new Error(`Configured voice channel ${channelId} does not have a guild ID`);
     }
 
-    let state = persistentConnections.get(channel.guild.id);
+    let guild;
+    try {
+        guild = await resolveGuild(client, guildId);
+    } catch (error) {
+        scheduleInitialConnectionRetry(client, channelId, error);
+        throw error;
+    }
+
+    channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
+    if (!channel || channel.type !== ChannelType.GuildVoice) {
+        throw new Error(`Voice channel ${channelId} is unavailable after loading guild ${guildId}`);
+    }
+
+    let state = persistentConnections.get(guildId);
     if (state && state.channel.id !== channel.id) {
         state.active = false;
         if (state.retryTimer) {
@@ -161,7 +230,7 @@ async function connectPersistentVoiceChannelById(client, channelId) {
 
     if (!state) {
         state = {
-            guild: channel.guild,
+            guild,
             channel,
             connection: null,
             connectPromise: null,
@@ -169,32 +238,51 @@ async function connectPersistentVoiceChannelById(client, channelId) {
             retryCount: 0,
             retryTimer: null
         };
-        persistentConnections.set(channel.guild.id, state);
+        persistentConnections.set(guildId, state);
+    } else {
+        state.guild = guild;
+        state.channel = channel;
     }
 
     try {
         await connectPersistentState(state);
+        const retryTimer = initialConnectionRetries.get(channelId);
+        if (retryTimer) {
+            clearTimeout(retryTimer);
+            initialConnectionRetries.delete(channelId);
+        }
         return channel;
     } catch (error) {
         scheduleReconnect(state, error);
+        scheduleInitialConnectionRetry(client, channelId, error);
         throw error;
     }
 }
 
 async function connectConfiguredVoiceChannels(client) {
-    await Promise.all([...client.guilds.cache.values()].map(async guild => {
-        const channelId = client.settings.getGuildSettings(guild.id).voiceChannelId;
-        if (!channelId) {
-            return;
-        }
+    try {
+        await client.guilds.fetch();
+    } catch (error) {
+        console.error('Guild cache could not be populated before persistent voice setup:', error);
+    }
 
-        try {
-            const channel = await connectPersistentVoiceChannelById(client, channelId);
-            console.log(`Sabit ses kanalına bağlandı: ${guild.name} / ${channel.name} (${channel.id})`);
-        } catch (error) {
-            console.error(`Sabit ses kanalına bağlanılamadı (${guild.name}, ${channelId}); yeniden denenecek:`, error);
-        }
+    await Promise.all([...client.guilds.cache.values()].map(async guild => {
+        await connectConfiguredVoiceChannelForGuild(client, guild);
     }));
+}
+
+async function connectConfiguredVoiceChannelForGuild(client, guild) {
+    const channelId = client.settings.getGuildSettings(guild.id).voiceChannelId;
+    if (!channelId) {
+        return;
+    }
+
+    try {
+        const channel = await connectPersistentVoiceChannelById(client, channelId);
+        console.log(`Sabit ses kanalına bağlandı: ${guild.name} / ${channel.name} (${channel.id})`);
+    } catch (error) {
+        console.error(`Yeni sunucuda sabit ses kanalına bağlanılamadı (${guild.name}, ${channelId}); yeniden denenecek:`, error);
+    }
 }
 
 async function joinMemberVoiceChannel(member) {
@@ -251,6 +339,7 @@ async function joinMemberVoiceChannel(member) {
 
 module.exports = {
     connectConfiguredVoiceChannels,
+    connectConfiguredVoiceChannelForGuild,
     connectPersistentVoiceChannelById,
     joinMemberVoiceChannel
 };

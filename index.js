@@ -50,4 +50,10 @@ client.once('ready', async () => {
     console.log(`Bot başarıyla aktif edildi: ${client.user.tag}`);
 });
 
+client.on('guildCreate', guild => {
+    client.voice.connectConfiguredVoiceChannelForGuild(client, guild).catch(error => {
+        console.error(`Yeni sunucunun sabit ses ayarı yüklenemedi (${guild.id}):`, error);
+    });
+});
+
 client.login(process.env.BOT_TOKEN || process.env.DISCORD_TOKEN);
