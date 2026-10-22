@@ -1,6 +1,9 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
 const { isValidHttpUrl } = require('../utils/validation');
+const { sanitizeText } = require('../utils/input');
+const { checkCommandAccess, checkCooldown } = require('../utils/interaction-guard');
+const { checkPermission } = require('../utils/permissions');
 const { startRegistrationTimeout } = require('../utils/registration-timeout');
 
 const cooldowns = new Map();
@@ -44,7 +47,7 @@ module.exports = (client) => {
             option.setName('kulaklik_acik')
                 .setDescription('Botun kulaklığı açık olsun mu?')
                 .setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+        .setDefaultMemberPermissions(0n);
 
     const logCommand = new SlashCommandBuilder()
         .setName('log')
@@ -54,7 +57,7 @@ module.exports = (client) => {
                 .setDescription('Kayıt log metin kanalı')
                 .addChannelTypes(ChannelType.GuildText)
                 .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+        .setDefaultMemberPermissions(0n);
 
     const panelCommand = new SlashCommandBuilder()
         .setName('panel')
@@ -90,6 +93,7 @@ module.exports = (client) => {
         .addStringOption(option =>
             option.setName('gorsel')
                 .setDescription('Panel görseli URL’si; boş bırakılırsa sunucu logosu kullanılır')
+                .setMaxLength(2048)
                 .setRequired(false))
         .addStringOption(option =>
             option.setName('oda_baslik')
@@ -104,8 +108,9 @@ module.exports = (client) => {
         .addStringOption(option =>
             option.setName('oda_gorsel')
                 .setDescription('Kayıt odası karşılama görseli URL’si; boş bırakılırsa sunucu logosu kullanılır')
+                .setMaxLength(2048)
                 .setRequired(false))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+        .setDefaultMemberPermissions(0n);
 
     client.commands.set(setupCommand.name, setupCommand);
     client.commands.set(logCommand.name, logCommand);
@@ -114,8 +119,9 @@ module.exports = (client) => {
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand() || !['setup', 'log', 'panel'].includes(interaction.commandName)) return;
 
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({ content: '❌ Bu komutu kullanmak için Yönetici yetkisine sahip olmalısın.', flags: 64 });
+        const requiredPermission = interaction.commandName === 'log' ? 'log' : 'admin';
+        if (!await checkCommandAccess(interaction, requiredPermission)) {
+            return;
         }
 
         const guildId = interaction.guild.id;
@@ -124,6 +130,13 @@ module.exports = (client) => {
             const category = interaction.options.getChannel('kategori');
             const role = interaction.options.getRole('rol');
             const voiceChannel = interaction.options.getChannel('ses_kanali');
+            if (role.id === guildId) {
+                return interaction.reply({
+                    content: '❌ @everyone rolü kayıt yetkilisi olarak atanamaz.',
+                    flags: 64
+                });
+            }
+
             const voiceStatus = interaction.options.getString('ses_durumu');
             const microphoneOpen = interaction.options.getBoolean('mikrofon_acik');
             const headsetOpen = interaction.options.getBoolean('kulaklik_acik');
@@ -198,14 +211,14 @@ module.exports = (client) => {
 
         if (interaction.commandName === 'panel') {
             const targetChannel = interaction.options.getChannel('kanal');
-            const baslik = interaction.options.getString('baslik') || DEFAULT_PANEL_TITLE;
-            const aciklama = interaction.options.getString('aciklama') || DEFAULT_PANEL_DESCRIPTION;
-            const buttonLabel = interaction.options.getString('buton_yazi') || 'Kayıt Talep Et';
+            const baslik = sanitizeText(interaction.options.getString('baslik') || DEFAULT_PANEL_TITLE, { maxLength: 256 }) || DEFAULT_PANEL_TITLE;
+            const aciklama = sanitizeText(interaction.options.getString('aciklama') || DEFAULT_PANEL_DESCRIPTION, { maxLength: 4096, allowNewlines: true }) || DEFAULT_PANEL_DESCRIPTION;
+            const buttonLabel = sanitizeText(interaction.options.getString('buton_yazi') || 'Kayıt Talep Et', { maxLength: 80 }) || 'Kayıt Talep Et';
             const buttonStyleName = interaction.options.getString('buton_renk') || 'primary';
-            const panelImage = interaction.options.getString('gorsel');
-            const welcomeTitle = interaction.options.getString('oda_baslik');
-            const welcomeDescription = interaction.options.getString('oda_aciklama');
-            const welcomeImage = interaction.options.getString('oda_gorsel');
+            const panelImage = sanitizeText(interaction.options.getString('gorsel') || '', { maxLength: 2048 }) || null;
+            const welcomeTitle = sanitizeText(interaction.options.getString('oda_baslik') || '', { maxLength: 256 });
+            const welcomeDescription = sanitizeText(interaction.options.getString('oda_aciklama') || '', { maxLength: 4096, allowNewlines: true });
+            const welcomeImage = sanitizeText(interaction.options.getString('oda_gorsel') || '', { maxLength: 2048 }) || null;
 
             const guildSettings = client.settings.getGuildSettings(guildId);
             const panelImageUrl = panelImage || guildSettings.customLogo;
@@ -219,8 +232,10 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Oda görseli veya sunucu logosu geçerli bir HTTP ya da HTTPS URL’si olmalıdır.', flags: 64 });
             }
 
-            guildSettings.welcomeTitle = welcomeTitle || guildSettings.welcomeTitle || DEFAULT_WELCOME_TITLE;
-            guildSettings.welcomeDescription = welcomeDescription || guildSettings.welcomeDescription || DEFAULT_WELCOME_DESCRIPTION;
+            guildSettings.welcomeTitle = welcomeTitle || sanitizeText(guildSettings.welcomeTitle, { maxLength: 256 }) || DEFAULT_WELCOME_TITLE;
+            guildSettings.welcomeDescription = welcomeDescription
+                || sanitizeText(guildSettings.welcomeDescription, { maxLength: 4096, allowNewlines: true })
+                || DEFAULT_WELCOME_DESCRIPTION;
 
             const embed = createEmbed({
                 title: baslik,
@@ -237,7 +252,8 @@ module.exports = (client) => {
 
             await targetChannel.send({
                 embeds: [embed],
-                components: [row]
+                components: [row],
+                allowedMentions: { parse: [] }
             });
 
             client.settings.updateGuildSettings(guildId, {
@@ -260,6 +276,8 @@ module.exports = (client) => {
         const guildSettings = client.settings.getGuildSettings(guildId);
 
         if (interaction.customId === 'kayit_talep_et') {
+            if (!await checkCooldown(interaction)) return;
+
             await interaction.reply({ content: '⏳ Kayıt talebiniz işleniyor, size özel oda hazırlanıyor...', flags: 64 }).catch(() => {});
 
             if (!guildSettings || !guildSettings.categoryId || !guildSettings.logChannelId) {
@@ -293,8 +311,9 @@ module.exports = (client) => {
             }
 
             try {
+                const channelUsername = sanitizeText(interaction.user.username, { maxLength: 80 }).replace(/[^\p{L}\p{N}_-]+/gu, '-');
                 const privateChannel = await guild.channels.create({
-                    name: `kayıt-${interaction.user.username}`,
+                    name: `kayıt-${channelUsername || interaction.user.id}`,
                     type: ChannelType.GuildText,
                     parent: category,
                     permissionOverwrites: [
@@ -341,7 +360,10 @@ module.exports = (client) => {
                     image: welcomeImage
                 });
 
-                await privateChannel.send({ embeds: [uyeEmbed] });
+                await privateChannel.send({
+                    embeds: [uyeEmbed],
+                    allowedMentions: { parse: [] }
+                });
 
                 const aktifYetkililer = yetkiliRol.members.filter(member => {
                     const status = member.presence?.status;
@@ -363,7 +385,8 @@ module.exports = (client) => {
                 await logKanali.send({
                     content: `🔔 ${yetkiliRol}, yeni bir kayıt talebi açıldı!`,
                     embeds: [yetkiliEmbed],
-                    components: [aldimButonu]
+                    components: [aldimButonu],
+                    allowedMentions: { roles: [yetkiliRol.id], users: [] }
                 });
 
             } catch (error) {
@@ -373,17 +396,15 @@ module.exports = (client) => {
         }
 
         if (interaction.customId.startsWith('kayit_al_')) {
+            if (!await checkCooldown(interaction)) return;
+            if (!await checkPermission(interaction, 'registration')) {
+                return;
+            }
+
             await interaction.deferUpdate().catch(() => {});
 
             if (!guildSettings || !guildSettings.roleId) {
                 return interaction.followUp({ content: '❌ Sunucu ayarları bulunamadı.', flags: 64 });
-            }
-
-            const hasRole = interaction.member.roles.cache.has(guildSettings.roleId);
-            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
-
-            if (!hasRole && !isAdmin) {
-                return interaction.followUp({ content: '❌ Bu butonu yalnızca kayıt yetkilileri kullanabilir!', flags: 64 });
             }
 
             const targetUserId = interaction.customId.split('_')[2];
@@ -414,7 +435,7 @@ module.exports = (client) => {
 
             const oldEmbed = interaction.message.embeds[0];
             const updatedEmbed = EmbedBuilder.from(oldEmbed)
-                .setDescription(oldEmbed.description.replace('Durum: Beklemede (Devralınmadı)', `Durum: İşlem Devralındı (${interaction.user.tag})`))
+                .setDescription(sanitizeText(oldEmbed.description.replace('Durum: Beklemede (Devralınmadı)', `Durum: İşlem Devralındı (${interaction.user.tag})`), { maxLength: 4096, allowNewlines: true }))
                 .setColor('#5865F2');
 
             const claimedMessage = await interaction.message.edit({
@@ -447,6 +468,11 @@ module.exports = (client) => {
         }
 
         if (interaction.customId.startsWith('kayit_basarili_')) {
+            if (!await checkCooldown(interaction)) return;
+            if (!await checkPermission(interaction, 'registration')) {
+                return;
+            }
+
             interaction.client.registrationTimeouts?.get(interaction.message.id)?.stop('resolved');
             await interaction.reply({ content: `✅ Kayıt başarıyla tamamlandı, kanal kapatılıyor...`, flags: 64 }).catch(() => {});
             
@@ -461,6 +487,11 @@ module.exports = (client) => {
         }
 
         if (interaction.customId.startsWith('kayit_iptal_')) {
+            if (!await checkCooldown(interaction)) return;
+            if (!await checkPermission(interaction, 'registration')) {
+                return;
+            }
+
             interaction.client.registrationTimeouts?.get(interaction.message.id)?.stop('resolved');
             await interaction.reply({ content: `❌ Kayıt iptal edildi, kanal kapatılıyor...`, flags: 64 }).catch(() => {});
             

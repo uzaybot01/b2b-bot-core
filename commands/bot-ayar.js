@@ -1,6 +1,8 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
 const { isValidHttpUrl } = require('../utils/validation');
+const { sanitizeText } = require('../utils/input');
+const { checkCommandAccess } = require('../utils/interaction-guard');
 
 module.exports = client => {
     const command = new SlashCommandBuilder()
@@ -11,14 +13,15 @@ module.exports = client => {
                 .setDescription('Kullanılacak logo veya görselin HTTP/HTTPS bağlantısı')
                 .setMaxLength(2048)
                 .setRequired(true))
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+        .setDefaultMemberPermissions(0n);
 
     client.commands.set(command.name, command);
 
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand() || interaction.commandName !== command.name) return;
+        if (!await checkCommandAccess(interaction, 'admin')) return;
 
-        const logo = interaction.options.getString('logo', true);
+        const logo = sanitizeText(interaction.options.getString('logo', true), { maxLength: 2048 });
         if (!isValidHttpUrl(logo)) {
             return interaction.reply({
                 content: '❌ Logo için geçerli bir HTTP veya HTTPS URL’si girin.',

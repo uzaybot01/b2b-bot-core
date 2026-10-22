@@ -1,6 +1,8 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
 const { isValidHttpUrl } = require('../utils/validation');
+const { sanitizeText } = require('../utils/input');
+const { checkCommandAccess } = require('../utils/interaction-guard');
 
 const command = new SlashCommandBuilder()
     .setName('bot-profil')
@@ -14,7 +16,7 @@ const command = new SlashCommandBuilder()
             .setDescription('Bot profilinde kullanılacak görselin HTTP/HTTPS bağlantısı')
             .setMaxLength(2048)
             .setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+    .setDefaultMemberPermissions(0n);
 
 function isRateLimitError(error) {
     return error.status === 429
@@ -29,15 +31,10 @@ module.exports = client => {
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand() || interaction.commandName !== command.name) return;
 
-        if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({
-                content: '❌ Bu komutu yalnızca sunucu yöneticileri kullanabilir.',
-                flags: 64
-            });
-        }
+        if (!await checkCommandAccess(interaction, 'admin')) return;
 
         const image = interaction.options.getAttachment('gorsel');
-        const imageUrl = interaction.options.getString('url');
+        const imageUrl = sanitizeText(interaction.options.getString('url') || '', { maxLength: 2048 }) || null;
 
         if (Boolean(image) === Boolean(imageUrl)) {
             return interaction.reply({

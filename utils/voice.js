@@ -298,6 +298,28 @@ async function connectConfiguredVoiceChannelForGuild(client, guild) {
     }
 }
 
+function disconnectPersistentVoiceChannelForGuild(guildId) {
+    const state = persistentConnections.get(guildId);
+    if (!state) {
+        return false;
+    }
+
+    state.active = false;
+    if (state.retryTimer) {
+        clearTimeout(state.retryTimer);
+    }
+
+    const initialRetry = initialConnectionRetries.get(state.channel.id);
+    if (initialRetry) {
+        clearTimeout(initialRetry);
+        initialConnectionRetries.delete(state.channel.id);
+    }
+
+    state.connection?.destroy();
+    persistentConnections.delete(guildId);
+    return true;
+}
+
 async function joinMemberVoiceChannel(member) {
     const guildId = member?.guild?.id || member?.voice?.channel?.guild?.id;
     const client = member?.client || member?.guild?.client;
@@ -357,5 +379,6 @@ module.exports = {
     connectConfiguredVoiceChannels,
     connectConfiguredVoiceChannelForGuild,
     connectPersistentVoiceChannelById,
+    disconnectPersistentVoiceChannelForGuild,
     joinMemberVoiceChannel
 };

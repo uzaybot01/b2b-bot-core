@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
+const { checkCommandAccess } = require('../utils/interaction-guard');
 
 const command = new SlashCommandBuilder()
     .setName('yardim')
@@ -10,6 +11,7 @@ module.exports = client => {
 
     client.on('interactionCreate', async interaction => {
         if (!interaction.isChatInputCommand() || interaction.commandName !== command.name) return;
+        if (!await checkCommandAccess(interaction, 'public')) return;
 
         const embed = createEmbed({
             title: 'Uzay Bot | Komut Rehberi',
@@ -17,19 +19,23 @@ module.exports = client => {
         }).addFields(
             {
                 name: '/setup `<kategori>` `<rol>` `[ses_kanali]`',
-                value: 'Kayıt kategorisi ve yetkili rolünü ayarlar. `ses_kanali` sabit kanalı; `ses_durumu` birlikte ayarı, `mikrofon_acik` ve `kulaklik_acik` ise ayrı tercihleri belirler.'
+                value: 'Sunucu sahibi, yöneticisi veya özel yönetici rolü kullanabilir. Kayıt kategorisi ve kayıt yetkilisi rolünü ayarlar; `ses_kanali` sabit kanalı, ses seçenekleri botun ses durumunu belirler.'
             },
             {
                 name: '/log `<kanal>`',
-                value: 'Kayıt taleplerinin ve yönetim butonlarının gönderileceği log kanalını ayarlar.'
+                value: 'Yönetici veya log/güvenlik yetkilisi kayıt bildirim kanalını ayarlayabilir.'
             },
             {
                 name: '/panel `<kanal>`',
-                value: 'Kayıt panelini gönderir; başlık, açıklama, buton, görsel ve oda karşılama metnini özelleştirir.'
+                value: 'Sunucu sahibi, yönetici veya özel yönetici rolü kullanabilir. Kayıt panelini gönderir; metin, buton ve görselleri özelleştirir.'
+            },
+            {
+                name: '/yetki-ayarla `[yonetici_rolu]` `[log_rolu]`',
+                value: 'Yalnızca sunucu sahibi veya Discord Administrator özel yönetici ve log/güvenlik rollerini atayabilir veya kaldırabilir. Kayıt rolü `/setup` içinden ayarlanır.'
             },
             {
                 name: 'Kayıt süresi',
-                value: 'Yetkili bir talebi devralınca 2 dakikalık geri sayım başlar. Süre dolarsa talep zaman aşımıyla iptal edilir ve oda bilgilendirilir.'
+                value: 'Kayıt yetkilisi talebi devralınca 2 dakikalık geri sayım başlar. Devralma ve sonuçlandırma işlemlerinde kayıt rolü denetlenir. Süre dolarsa oda bilgilendirilir.'
             },
             {
                 name: '/bot-ayar `<logo>`',
