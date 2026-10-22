@@ -17,7 +17,7 @@ module.exports = client => {
         }).addFields(
             {
                 name: '/setup `<kategori>` `<rol>` `[ses_kanali]`',
-                value: 'Kayıt kategorisi ve yetkili rolünü ayarlar; `ses_kanali` sabit kanalı, `ses_durumu` ise sağır/susturulmuş ya da kulaklık/mikrofon açık tercihini belirler.'
+                value: 'Kayıt kategorisi ve yetkili rolünü ayarlar. `ses_kanali` sabit kanalı; `ses_durumu` birlikte ayarı, `mikrofon_acik` ve `kulaklik_acik` ise ayrı tercihleri belirler.'
             },
             {
                 name: '/log `<kanal>`',
@@ -34,6 +34,10 @@ module.exports = client => {
             {
                 name: '/bot-ayar `<logo>`',
                 value: 'Sunucuya özel logo URL’sini kaydeder. Panel ve oda görseli ayrıca belirtilmediyse bu logo kullanılır.'
+            },
+            {
+                name: '/bot-profil `<gorsel>`',
+                value: 'Sunucu yöneticileri botun ortak profil fotoğrafını yüklenen görselle güncelleyebilir. Discord değişiklik sıklığını sınırlayabilir.'
             },
             {
                 name: '/yardim',

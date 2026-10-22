@@ -30,11 +30,19 @@ module.exports = (client) => {
                 .setRequired(false))
         .addStringOption(option =>
             option.setName('ses_durumu')
-                .setDescription('Botun ses kanalında sağır/susturulmuş veya açık durması')
+                .setDescription('Her iki ses tercihini birlikte ayarlar')
                 .addChoices(
                     { name: 'Sağır ve susturulmuş', value: 'deaf_muted' },
                     { name: 'Kulaklık ve mikrofon açık', value: 'open' }
                 )
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('mikrofon_acik')
+                .setDescription('Botun mikrofonu açık olsun mu?')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('kulaklik_acik')
+                .setDescription('Botun kulaklığı açık olsun mu?')
                 .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
@@ -117,39 +125,60 @@ module.exports = (client) => {
             const role = interaction.options.getRole('rol');
             const voiceChannel = interaction.options.getChannel('ses_kanali');
             const voiceStatus = interaction.options.getString('ses_durumu');
+            const microphoneOpen = interaction.options.getBoolean('mikrofon_acik');
+            const headsetOpen = interaction.options.getBoolean('kulaklik_acik');
+            const voicePreferences = client.settings.getGuildVoicePreferences(guildId);
+
+            if (voiceStatus) {
+                voicePreferences.selfDeaf = voiceStatus === 'deaf_muted';
+                voicePreferences.selfMute = voiceStatus === 'deaf_muted';
+            }
+            if (microphoneOpen !== null) {
+                voicePreferences.selfMute = !microphoneOpen;
+            }
+            if (headsetOpen !== null) {
+                voicePreferences.selfDeaf = !headsetOpen;
+            }
+
+            const voicePreferencesProvided = Boolean(voiceStatus)
+                || microphoneOpen !== null
+                || headsetOpen !== null;
+            const voiceSettings = voicePreferencesProvided ? {
+                voiceSelfDeaf: voicePreferences.selfDeaf,
+                voiceSelfMute: voicePreferences.selfMute
+            } : {};
 
             client.settings.updateGuildSettings(guildId, {
                 categoryId: category.id,
                 roleId: role.id,
                 ...(voiceChannel ? { voiceChannelId: voiceChannel.id } : {}),
-                ...(voiceStatus ? {
-                    voiceSelfDeaf: voiceStatus === 'deaf_muted',
-                    voiceSelfMute: voiceStatus === 'deaf_muted'
-                } : {})
+                ...voiceSettings
             });
 
-            if (voiceChannel) {
-                client.voiceService.connectPersistentVoiceChannelById(client, voiceChannel.id)
+            const savedVoiceChannelId = voiceChannel?.id
+                || (voicePreferencesProvided ? client.settings.getGuildSettings(guildId).voiceChannelId : null);
+            if (savedVoiceChannelId) {
+                client.voiceService.connectPersistentVoiceChannelById(client, savedVoiceChannelId)
                     .then(() => {
-                        console.log(`Sunucu sabit ses kanalına bağlandı: ${interaction.guild.name} / ${voiceChannel.name}`);
+                        console.log(`Sunucu sabit ses kanalına bağlandı: ${interaction.guild.name} / ${savedVoiceChannelId}`);
                     })
                     .catch(error => {
                         console.error(`Sunucu sabit ses kanalına bağlanılamadı (${interaction.guild.name}):`, error);
                     });
             }
 
-            if (voiceStatus && !voiceChannel) {
-                const savedVoiceChannelId = client.settings.getGuildSettings(guildId).voiceChannelId;
-                if (savedVoiceChannelId) {
-                    client.voiceService.connectPersistentVoiceChannelById(client, savedVoiceChannelId)
-                        .catch(error => {
-                            console.error(`Sunucu ses durumu güncellenirken bağlantı yenilenemedi (${interaction.guild.name}):`, error);
-                        });
-                }
-            }
+            const microphoneLabel = microphoneOpen === null
+                ? null
+                : (microphoneOpen ? 'Açık' : 'Susturulmuş');
+            const headsetLabel = headsetOpen === null
+                ? null
+                : (headsetOpen ? 'Açık' : 'Sağır');
+            const combinedStatusLabel = voiceStatus
+                ? (voiceStatus === 'deaf_muted' ? 'Sağır ve susturulmuş' : 'Kulaklık ve mikrofon açık')
+                : null;
 
             return interaction.reply({
-                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**${voiceChannel ? `\n🔊 Sabit ses kanalı: **${voiceChannel.name}**` : ''}${voiceStatus ? `\n🎙️ Ses durumu: **${voiceStatus === 'deaf_muted' ? 'Sağır ve susturulmuş' : 'Kulaklık ve mikrofon açık'}**` : ''}`,
+                content: `✅ **Kurulum Başarılı!**\n📌 Kayıt Kategorisi: **${category.name}**\n🛡️ Yetkili Rol: **${role.name}**${voiceChannel ? `\n🔊 Sabit ses kanalı: **${voiceChannel.name}**` : ''}${combinedStatusLabel ? `\n🎙️ Ses durumu: **${combinedStatusLabel}**` : ''}${microphoneLabel ? `\n🎤 Mikrofon: **${microphoneLabel}**` : ''}${headsetLabel ? `\n🎧 Kulaklık: **${headsetLabel}**` : ''}`,
                 flags: 64
             });
         }
