@@ -1,5 +1,6 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../utils/embeds');
+const { isValidHttpUrl } = require('../utils/validation');
 
 const command = new SlashCommandBuilder()
     .setName('bot-profil')
@@ -7,7 +8,12 @@ const command = new SlashCommandBuilder()
     .addAttachmentOption(option =>
         option.setName('gorsel')
             .setDescription('Bot profilinde kullanılacak görsel dosyası')
-            .setRequired(true))
+            .setRequired(false))
+    .addStringOption(option =>
+        option.setName('url')
+            .setDescription('Bot profilinde kullanılacak görselin HTTP/HTTPS bağlantısı')
+            .setMaxLength(2048)
+            .setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
 function isRateLimitError(error) {
@@ -30,10 +36,27 @@ module.exports = client => {
             });
         }
 
-        const image = interaction.options.getAttachment('gorsel', true);
-        if (image.contentType && !image.contentType.startsWith('image/')) {
+        const image = interaction.options.getAttachment('gorsel');
+        const imageUrl = interaction.options.getString('url');
+
+        if (Boolean(image) === Boolean(imageUrl)) {
+            return interaction.reply({
+                content: '❌ Profil görseli için ya bir dosya yükleyin ya da bir URL girin.',
+                flags: 64
+            });
+        }
+
+        if (image?.contentType && !image.contentType.startsWith('image/')) {
             return interaction.reply({
                 content: '❌ Lütfen geçerli bir görsel dosyası yükleyin.',
+                flags: 64
+            });
+        }
+
+        const avatarUrl = image?.url || imageUrl;
+        if (!isValidHttpUrl(avatarUrl)) {
+            return interaction.reply({
+                content: '❌ Görsel için geçerli bir HTTP veya HTTPS URL’si girin.',
                 flags: 64
             });
         }
@@ -41,28 +64,12 @@ module.exports = client => {
         await interaction.deferReply({ flags: 64 });
 
         try {
-            const response = await fetch(image.url);
-            if (!response.ok) {
-                throw new Error(`Profil görseli indirilemedi (HTTP ${response.status})`);
-            }
-
-            const contentType = image.contentType || response.headers.get('content-type');
-            if (!contentType?.startsWith('image/')) {
-                throw new Error('Yüklenen dosya geçerli bir görsel değil');
-            }
-
-            const imageData = Buffer.from(await response.arrayBuffer());
-            if (imageData.length === 0) {
-                throw new Error('Yüklenen görsel boş');
-            }
-
-            const avatar = `data:${contentType};base64,${imageData.toString('base64')}`;
-            await client.user.setAvatar(avatar);
+            await client.user.setAvatar(avatarUrl);
             return interaction.editReply({
                 embeds: [createEmbed({
                     title: '✅ Bot profil fotoğrafı güncellendi',
-                    description: 'Yüklediğiniz görsel botun yeni profil fotoğrafı olarak ayarlandı.',
-                    image: image.url
+                    description: 'Gönderdiğiniz görsel botun genel profil fotoğrafı olarak ayarlandı.',
+                    image: avatarUrl
                 })]
             });
         } catch (error) {

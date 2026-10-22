@@ -36,8 +36,8 @@ module.exports = client => {
                 value: 'Sunucuya özel logo URL’sini kaydeder. Panel ve oda görseli ayrıca belirtilmediyse bu logo kullanılır.'
             },
             {
-                name: '/bot-profil `<gorsel>`',
-                value: 'Sunucu yöneticileri botun ortak profil fotoğrafını yüklenen görselle güncelleyebilir. Discord değişiklik sıklığını sınırlayabilir.'
+                name: '/bot-profil [`gorsel`] [`url`]',
+                value: 'Sunucu yöneticileri bir görsel dosyası veya görsel URL’si vererek botun genel profil fotoğrafını güncelleyebilir. İkisinden yalnızca biri kullanılmalıdır; Discord değişiklik sıklığını sınırlayabilir.'
             },
             {
                 name: '/yardim',
