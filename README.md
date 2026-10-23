@@ -134,27 +134,27 @@ module.exports = {
 | Grup | Komut | Parametreler | Kim kullanabilir? | Açıklama |
 | --- | --- | --- | --- | --- |
 | Kayıt | `/kayit-ayar` | `<kategori>` (Kategori kanalı), `<rol>` (kayıt yetkilisi rolü) | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Kayıt kategorisi ve kayıt yetkilisi rolünü ayarlar. |
-| Kayıt / Panel | `/panel-kur` | `<kanal>` (metin kanalı), `[baslik]`, `[aciklama]`, `[buton_yazi]`, `[buton_renk]`, `[gorsel]`, `[oda_baslik]`, `[oda_aciklama]`, `[oda_gorsel]` | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Giriş kanalına kayıt talep paneli yollar. Panel ve oda karşılama içeriğini özelleştirir. |
+| Kayıt / Panel | `/kayit-talep-butonu` | `<kanal>` (metin kanalı), `[baslik]`, `[aciklama]`, `[buton_yazi]`, `[buton_renk]`, `[gorsel]`, `[oda_baslik]`, `[oda_aciklama]`, `[oda_gorsel]` | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Giriş kanalına kayıt talep butonu ve paneli yollar. Panel ve oda karşılama içeriğini özelleştirir. |
 | Ses | `/ses-kanal` | `<kanal>` (standart ses kanalı), `[islem]` (`Ekle ve bağlan` / `Çıkar ve bağlantıyı kes`; varsayılan ekle) | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Boşta bir worker'ı kanala yönlendirir; bu sunucuda en fazla dört kalıcı ses kanalı tutulabilir. |
 | Ses | `/ses-durum` | `[durum]` (`Sağır ve susturulmuş` / `Kulaklık ve mikrofon açık`), `[mikrofon_acik]`, `[kulaklik_acik]`; en az biri gerekir | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Botun mikrofon ve kulaklık durumunu birlikte veya ayrı ayrı ayarlar. |
 | Log / Güvenlik | `/log-kanal` | `<kanal>` (metin kanalı) | Sunucu sahibi, Administrator, atanmış yönetici rolü veya atanmış log/güvenlik rolü; Discord Integrations içinde ilgili rol için etkinleştirilmiş olmalı | Yeni kayıt taleplerinin yetkili bildiriminin ve devralma panelinin gönderileceği kanalı ayarlar. |
 | Log / Güvenlik | `/yetki-ayarla` | `[yonetici_rolu]`, `[log_rolu]`, `[yonetici_rolunu_kaldir]`, `[log_rolunu_kaldir]`; en az bir değişiklik gerekir | Yalnızca sunucu sahibi veya Administrator izni; Discord Integrations içinde Administrator erişimi açık olmalı | Sunucuya özel yönetici ve log/güvenlik rollerini atar ya da kaldırır. |
-| Sunucu / Bot ayarları | `/sunucu-logo` | `<logo>` (HTTP/HTTPS URL) | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Yalnızca bu sunucu için varsayılan panel/karşılama logosunu kaydeder. |
+| Kayıt / Görsel | `/kayit-mesaj-gorseli` | `<logo>` (HTTP/HTTPS URL) | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Yalnızca bu sunucudaki kayıt paneli ve karşılama mesajı için varsayılan görseli kaydeder. |
 | Sunucu / Bot ayarları | `/bot-profil` | `[gorsel]` (dosya eki) veya `[url]` (HTTP/HTTPS URL); **yalnızca biri** kullanılmalıdır | Sunucu sahibi, Administrator veya atanmış yönetici rolü; Discord Integrations içinde bu komut rol için etkinleştirilmiş olmalı | Botun tüm sunucularda görünen genel profil fotoğrafını günceller. Discord değişiklik sıklığını sınırlayabilir. |
 | Yardım / Bilgi | `/yardim` | Parametre yok | Tüm üyeler | Komut rehberini gösterir. |
 
 Slash dışı tetikleyici: `!duyuru`, [Duyuru modülü](./commands/duyuru.js) içinde yalnızca modülün aktif olduğunu bildirir; toplu mesaj göndermez. Henüz uygulanmamış bir toplu mesaj slash komutu envantere dahil değildir.
 
-`commands/` klasöründeki her modül `index.js` tarafından yüklenir. Etkin slash komutları: `/kayit-ayar`, `/ses-kanal`, `/ses-durum`, `/log-kanal`, `/panel-kur`, `/yetki-ayarla`, `/sunucu-logo`, `/bot-profil` ve `/yardim`. `duyuru.js` slash komutu değildir; `!duyuru` mesaj tetikleyicisidir ve toplu mesaj göndermez.
+`commands/` klasöründeki her modül `index.js` tarafından yüklenir. Etkin slash komutları: `/kayit-ayar`, `/kayit-talep-butonu`, `/kayit-mesaj-gorseli`, `/ses-kanal`, `/ses-durum`, `/log-kanal`, `/yetki-ayarla`, `/bot-profil` ve `/yardim`. `duyuru.js` slash komutu değildir; `!duyuru` mesaj tetikleyicisidir ve toplu mesaj göndermez.
 
-Komut adlandırma standardı: Slash komutları küçük harfli, ASCII ve tireli `kategori-islev` biçimini izler. Dosya adları da modülün sorumluluğunu belirtir; örneğin `kayit-sistemi.js`, `sunucu-logo.js` ve `yetki-ayarla.js`. `ses-ayar`, `log-ayar` veya `panel-ayarla` için ayrı birer işlem bulunmadığından aynı işi yapan yinelenen komutlar eklenmemiştir; ses kanalı/durumu, log kanalı ve panel kurma işlemleri doğrudan ve ayrı adlandırılmıştır.
+Komut adlandırma standardı: Slash komutları Discord uyumluluğu için Türkçe sözcüklerin ASCII karşılıklarını kullanan küçük harfli ve tireli `kategori-islev` biçimini izler; örneğin `kayit-talep-butonu` ve `kayit-mesaj-gorseli`. Komut açıklamaları kullanıcıya Türkçe ve işlev odaklı bilgi verir. Komut modülü dosya adları bu adlandırmadan bağımsızdır ve değiştirilmemiştir. `ses-kanal`, `ses-durum`, `log-kanal` ve `yetki-ayarla` görevlerini açıkça belirtir.
 
 ### Rol grupları ve yetki matrisi
 
 | Görev grubu | Yetki kaynağı | İzin verilen işlemler |
 | --- | --- | --- |
 | Sunucu sahibi / Discord Administrator | Discord sunucu sahibi ve `Administrator` izni | Tüm yönetim ve kayıt işlemleri; `/yetki-ayarla` ile görev rollerini yapılandırma. |
-| Özel yönetici | `data/settings/<guildId>.json` içindeki `adminRoleId` | `/kayit-ayar`, `/ses-kanal`, `/ses-durum`, `/panel-kur`, `/sunucu-logo`, `/bot-profil`; ayrıca log ve kayıt işlemlerinde yönetici yetkisi. Görev rolü atayamaz/kaldıramaz. Discord Integrations içinde ilgili komutlar bu role etkinleştirilmelidir. |
+| Özel yönetici | `data/settings/<guildId>.json` içindeki `adminRoleId` | `/kayit-ayar`, `/kayit-talep-butonu`, `/kayit-mesaj-gorseli`, `/ses-kanal`, `/ses-durum`, `/bot-profil`; ayrıca log ve kayıt işlemlerinde yönetici yetkisi. Görev rolü atayamaz/kaldıramaz. Discord Integrations içinde ilgili komutlar bu role etkinleştirilmelidir. |
 | Kayıt yetkilisi | `/kayit-ayar` ile kaydedilen `roleId` | Kayıt talebini devralma, sonucu başarılı/iptal olarak işaretleme. İlgili buton etkileşimlerinde uygulama içi yetki denetimi yapılır. |
 | Log/güvenlik yetkilisi | `/yetki-ayarla` ile kaydedilen `logSecurityRoleId` | `/log-kanal` kanalını yapılandırma. Discord Integrations içinde `/log-kanal` bu role etkinleştirilmelidir. |
 | Üye | Genel sunucu üyeliği | Kayıt panelinden talep açma ve kendi özel kayıt odasına erişme. Yönetim komutlarını çalıştıramaz, kayıt sonucunu veremez. |
@@ -170,7 +170,7 @@ Yetki reddedildiğinde bot, işlemi durdurur ve özel (ephemeral) “Yetersiz ye
 Discord'un bot komut izinlerini değiştiren REST API'si bot token'ı ile çalışmaz; endpoint uygulama sahibinin/yoneticisinin OAuth2 Bearer token'ını ve `applications.commands.permissions.update` kapsamını gerektirir. Bu proje hassas kullanıcı OAuth token'ı saklamaz ve izin değişikliklerini otomatik API çağrısıyla yapmaz. Her sunucunun yöneticisi bir defa şu ayarı yapmalıdır:
 
 1. Sunucu Ayarları → **Entegrasyonlar** → bot uygulaması → **Komut izinleri** bölümünü açın.
-2. `/kayit-ayar`, `/ses-kanal`, `/ses-durum`, `/panel-kur`, `/sunucu-logo` ve `/bot-profil` komutlarını özel yönetici rolüne; `/log-kanal` komutunu log/güvenlik rolüne; `/yetki-ayarla` komutunu Administrator/yönetici rolüne açın.
+2. `/kayit-ayar`, `/kayit-talep-butonu`, `/kayit-mesaj-gorseli`, `/ses-kanal`, `/ses-durum` ve `/bot-profil` komutlarını özel yönetici rolüne; `/log-kanal` komutunu log/güvenlik rolüne; `/yetki-ayarla` komutunu Administrator/yönetici rolüne açın.
 3. Kayıt yetkililerinin `Kaydı Devral`, `Başarılı` ve `İptal` butonlarını kullanması için gereken rol ataması `/kayit-ayar` ile yapılır; bu butonlara slash-komut görünürlük ayarı uygulanmaz.
 4. Üyelerin kayıt talep butonuna erişmesi için genel giriş paneli komut izninden bağımsız olarak açık/erişilebilir kalmalıdır.
 
@@ -190,19 +190,19 @@ Discord istemcisi komutları izin ayarına göre gizleyebilir veya kullanılamaz
 - `mikrofon_acik` ve `kulaklik_acik` tercihleri ayrı ayrı ayarlar. `true`, ilgili özelliğin açık; `false`, kapalı olmasını ifade eder. `durum` ile birlikte verilirse tekil tercihler kendi değerleri için önceliklidir.
 - İlgili tercih verilmezse daha önce kaydedilmiş değer korunur. Hiç tercih kaydedilmemişse varsayılan olarak `selfDeaf: true` ve `selfMute: true` kullanılır.
 
-### `/panel-kur` seçeneklerinin anlamı
+### `/kayit-talep-butonu` seçeneklerinin anlamı
 
 - `kanal` zorunludur. Diğer seçeneklerin tümü isteğe bağlıdır.
 - `buton_renk`: `primary` (mavi), `success` (yeşil), `danger` (kırmızı) veya `secondary` (gri). Varsayılan `primary` rengidir.
 - `buton_yazi` verilmezse “Kayıt Talep Et” kullanılır.
 - `baslik`, `aciklama` ve `buton_yazi` girilmezse varsayılan metinler kullanılır.
-- `gorsel`, panel embed’inin görselidir; girilmezse `/sunucu-logo` ile kaydedilmiş sunucu logosu kullanılır.
+- `gorsel`, panel embed’inin görselidir; girilmezse `/kayit-mesaj-gorseli` ile kaydedilmiş sunucu görseli kullanılır.
 - `oda_baslik`, `oda_aciklama` ve `oda_gorsel` kayıt odasında üyeye gösterilen karşılama embed’ini düzenler. Açıklamadaki `{user}` belirteci talebi açan üyenin etiketiyle değiştirilir. Oda görseli belirtilmezse sunucu logosu kullanılır.
 - `oda_*` metin ve görsel ayarları sunucu ayarlarına kaydedilir ve sonraki kayıt odalarında kullanılır.
 
-### `/sunucu-logo` ve `/bot-profil` farkı
+### `/kayit-mesaj-gorseli` ve `/bot-profil` farkı
 
-- `/sunucu-logo`, görsel URL’sini yalnızca komutun çalıştırıldığı sunucu için kaydeder. Kayıt paneli/karşılama görünümünde kullanılır; bot hesabının avatarını değiştirmez.
+- `/kayit-mesaj-gorseli`, görsel URL’sini yalnızca komutun çalıştırıldığı sunucu için kaydeder. Kayıt paneli/karşılama görünümünde kullanılır; bot hesabının avatarını değiştirmez.
 - `/bot-profil`, bot hesabının genel avatarını günceller. Değişiklik botun bulunduğu tüm sunucularda görünür ve Discord’un profil güncelleme sınırlarına tabidir.
 - `/bot-profil` için dosya eki veya URL’den yalnızca biri girilmelidir. URL’nin HTTP veya HTTPS olması gerekir. Discord.js URL görselini API’ye yüklemek üzere işler; yalnızca görsel içerik sağlayan, erişilebilir bir URL kullanın.
 
@@ -212,7 +212,7 @@ Discord istemcisi komutları izin ayarına göre gizleyebilir veya kullanılamaz
 
 ## Kayıt akışı
 
-1. Yönetici `/kayit-ayar`, `/log-kanal` ve `/panel-kur` komutlarıyla sunucuyu yapılandırır.
+1. Yönetici `/kayit-ayar`, `/log-kanal` ve `/kayit-talep-butonu` komutlarıyla sunucuyu yapılandırır.
 2. Üye kayıt panelindeki butona basar.
 3. Bot, `@everyone` erişimini kapatılmış ve talep sahibi/yetkili rolü/bot için izinler tanımlanmış özel bir metin kanalı oluşturur.
 4. Üyenin odasına yalnızca karşılama embed’i gönderilir.
@@ -343,7 +343,7 @@ Bot hazır, sunucuya eklendi veya uygulama yeniden başlatıldı
 ### Sunucu logosu ve bot avatarı arasındaki akış
 
 ```text
-/sunucu-logo <logo URL>
+/kayit-mesaj-gorseli <görsel URL>
     +--> URL doğrula
     +--> data/settings/<guildId>.json içindeki customLogo alanına yaz
     +--> O sunucunun kayıt paneli/karşılama görsellerinde varsayılan olarak kullan
@@ -398,10 +398,10 @@ Slash komutu / kayıt yönetim butonu etkileşimi
 5. Yönetici veya log yetkilisi /log-kanal <metin-kanalı>
                  |
                  v
-6. İsteğe bağlı: yönetici /sunucu-logo <logo-URL>
+6. İsteğe bağlı: yönetici /kayit-mesaj-gorseli <görsel-URL>
                  |
                  v
-7. Yönetici /panel-kur <giriş-kanalı> [özelleştirmeler]
+7. Yönetici /kayit-talep-butonu <giriş-kanalı> [özelleştirmeler]
                  |
                  v
 8. Üyeler panel butonuyla talep açar; kayıt yetkilisi log panelinden devralır ve sonuçlandırır
@@ -415,8 +415,8 @@ Slash komutu / kayıt yönetim butonu etkileşimi
 | 4 | Yönetici veya özel yönetici `/kayit-ayar` ile kategori ve kayıt rolünü seçsin. | Kayıt ayarları ilgili `data/settings/<guildId>.json` dosyasına kaydedilmelidir. |
 | 5 | İsteğe bağlı olarak yönetici `/ses-kanal` ile en fazla dört kalıcı kanal eklesin; `/ses-durum` ile tercihleri yapılandırsın. | Her kanal için ayrı bir worker atanmalı; kapasite aşımında mevcut bağlantılar korunmalıdır. |
 | 6 | Yönetici veya log yetkilisi `/log-kanal` ile bildirim kanalını seçsin. | Bot log kanalına mesaj gönderebilmelidir. |
-| 7 | İsteğe bağlı olarak yönetici `/sunucu-logo` ile sunucu logosunu kaydetsin. | URL HTTP/HTTPS olmalı ve görsel Discord tarafından alınabilmelidir. |
-| 8 | Yönetici `/panel-kur` ile giriş kanalına panel göndersin. | Panel mesajı ve butonu görünmelidir. |
+| 7 | İsteğe bağlı olarak yönetici `/kayit-mesaj-gorseli` ile kayıt mesajı görselini kaydetsin. | URL HTTP/HTTPS olmalı ve görsel Discord tarafından alınabilmelidir. |
+| 8 | Yönetici `/kayit-talep-butonu` ile giriş kanalına kayıt paneli göndersin. | Panel mesajı ve butonu görünmelidir. |
 | 9 | Test üyesi panel butonuna bassın; kayıt yetkilisi talebi devralsın. | Özel oda oluşmalı; yalnız kayıt yetkilileri/yöneticiler sonuç seçebilmelidir. |
 | 10 | İsteğe bağlı olarak yönetici `/bot-profil` ile avatarı güncellesin. | Komut başarılı yanıt vermeli; avatar tüm sunucularda değişmelidir. |
 
@@ -445,7 +445,7 @@ Cooldown anahtarları kullanıcı ve sunucuya göre bellekte tutulur; eski girdi
 
 ### Girdi doğrulama ve temizleme
 
-- `/panel-kur` başlık, açıklama, buton etiketi ve karşılama metinlerinde kontrol/bidi karakterleri temizlenir, metin uzunlukları Discord sınırlarıyla uyumlu tutulur. Metin girdileri kod, SQL veya shell olarak çalıştırılmaz.
+- `/kayit-talep-butonu` başlık, açıklama, buton etiketi ve karşılama metinlerinde kontrol/bidi karakterleri temizlenir, metin uzunlukları Discord sınırlarıyla uyumlu tutulur. Metin girdileri kod, SQL veya shell olarak çalıştırılmaz.
 - Görsel/logoların URL seçenekleri HTTP/HTTPS doğrulamasından geçirilir; kanal, rol, enum ve boolean seçenekleri Discord’un tipli seçenek API’sinden alınır.
 - Üyenin kullanıcı adı kayıt kanal adı yapılmadan önce kontrol karakterleri ve kanal adıyla uyumsuz karakterler yerine güvenli ayraçlarla normalize edilir.
 - Panel ve embed mesajlarında kullanıcı metni rol etiketlemesi olarak yorumlanmaz. Kayıt bildirimi mesajında yalnızca hedef kayıt rolünün etiketlenmesine izin verilir.
@@ -467,7 +467,7 @@ uzay-bot/
 │   ├── bot-profil.js           # /bot-profil genel bot avatarı komutu
 │   ├── duyuru.js               # !duyuru mesaj tetikleyicisi
 │   ├── kayit-sistemi.js        # Kayıt, ses, log, panel komutları ve buton akışı
-│   ├── sunucu-logo.js          # /sunucu-logo sunucuya özel logo ayarı
+│   ├── sunucu-logo.js          # /kayit-mesaj-gorseli sunucuya özel kayıt görseli
 │   ├── yardim.js               # Komut rehberi
 │   └── yetki-ayarla.js         # Özel yönetici ve log/güvenlik rolleri
 ├── utils/

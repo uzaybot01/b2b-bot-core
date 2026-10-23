@@ -4,7 +4,7 @@ const { checkCommandAccess } = require('../utils/interaction-guard');
 
 const command = new SlashCommandBuilder()
     .setName('yetki-ayarla')
-    .setDescription('Sunucuya özel yönetici ve log/güvenlik rollerini ayarlar.')
+    .setDescription('Sunucuya özel yönetici ve log/güvenlik rollerini atar veya kaldırır.')
     .addRoleOption(option =>
         option.setName('yonetici_rolu')
             .setDescription('Sistem ayarlarını kullanabilecek özel yönetici rolü')

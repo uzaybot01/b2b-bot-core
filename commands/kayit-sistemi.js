@@ -15,7 +15,7 @@ const DEFAULT_WELCOME_DESCRIPTION = 'Merhaba {user},\nYetkili ekibimiz çağrın
 module.exports = (client) => {
     const registrationSettingsCommand = new SlashCommandBuilder()
         .setName('kayit-ayar')
-        .setDescription('Kayıt kategorisi ve yetkili rolünü yapılandırır.')
+        .setDescription('Kayıt odalarının açılacağı kategoriyi ve kayıt yetkilisi rolünü ayarlar.')
         .addChannelOption(option =>
             option.setName('kategori')
                 .setDescription('Kişiye özel kayıt kanallarının açılacağı Kategori')
@@ -29,7 +29,7 @@ module.exports = (client) => {
 
     const voiceChannelCommand = new SlashCommandBuilder()
         .setName('ses-kanal')
-        .setDescription('Boşta bir ses botunu kanala bağlar veya kalıcı kanal listesinden çıkarır.')
+        .setDescription('Boşta bir ses worker’ını kanala bağlar veya kalıcı kanal listesinden çıkarır.')
         .addChannelOption(option =>
             option.setName('kanal')
                 .setDescription('Ses botunun bağlanacağı standart ses kanalı')
@@ -47,7 +47,7 @@ module.exports = (client) => {
 
     const voiceStatusCommand = new SlashCommandBuilder()
         .setName('ses-durum')
-        .setDescription('Botun ses kanalındaki mikrofon ve kulaklık durumunu ayarlar.')
+        .setDescription('Ses worker’larının mikrofon ve kulaklık tercihlerini ayarlar.')
         .addStringOption(option =>
             option.setName('durum')
                 .setDescription('İki ses tercihini birlikte ayarla')
@@ -68,7 +68,7 @@ module.exports = (client) => {
 
     const logChannelCommand = new SlashCommandBuilder()
         .setName('log-kanal')
-        .setDescription('Kayıt talep bildirimlerinin ve butonların gideceği log kanalını ayarlar.')
+        .setDescription('Kayıt talepleri ve yetkili işlem paneli için log kanalını ayarlar.')
         .addChannelOption(option =>
             option.setName('kanal')
                 .setDescription('Kayıt log metin kanalı')
@@ -77,8 +77,8 @@ module.exports = (client) => {
         .setDefaultMemberPermissions(0n);
 
     const panelCommand = new SlashCommandBuilder()
-        .setName('panel-kur')
-        .setDescription('Giriş kanalına özel tasarımlı kayıt talep butonunu gönderir.')
+        .setName('kayit-talep-butonu')
+        .setDescription('Kayıt talep butonunu ve özelleştirilebilir paneli giriş kanalına gönderir.')
         .addChannelOption(option =>
             option.setName('kanal')
                 .setDescription('Butonun gönderileceği giriş kanalı')

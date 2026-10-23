@@ -6,7 +6,7 @@ const { checkCommandAccess } = require('../utils/interaction-guard');
 
 const command = new SlashCommandBuilder()
     .setName('bot-profil')
-    .setDescription('Botun profil fotoğrafını günceller.')
+    .setDescription('Bot hesabının tüm sunucularda görünen profil fotoğrafını değiştirir.')
     .addAttachmentOption(option =>
         option.setName('gorsel')
             .setDescription('Bot profilinde kullanılacak görsel dosyası')

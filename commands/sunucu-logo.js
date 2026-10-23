@@ -6,11 +6,11 @@ const { checkCommandAccess } = require('../utils/interaction-guard');
 
 module.exports = client => {
     const command = new SlashCommandBuilder()
-        .setName('sunucu-logo')
-        .setDescription('Sunucuya özel panel logosunu ayarlar.')
+        .setName('kayit-mesaj-gorseli')
+        .setDescription('Bu sunucudaki kayıt paneli ve karşılama mesajı için varsayılan görseli ayarlar.')
         .addStringOption(option =>
             option.setName('logo')
-                .setDescription('Kullanılacak logo veya görselin HTTP/HTTPS bağlantısı')
+                .setDescription('Kayıt paneli ve karşılama mesajında kullanılacak HTTP/HTTPS görsel bağlantısı')
                 .setMaxLength(2048)
                 .setRequired(true))
         .setDefaultMemberPermissions(0n);
