@@ -3,6 +3,11 @@ const path = require('path');
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
+const masterToken = process.env.MASTER_TOKEN || process.env.BOT_TOKEN || process.env.DISCORD_TOKEN;
+if (!masterToken) {
+    throw new Error('Ana Bot token bulunamadı. .env içinde MASTER_TOKEN veya DISCORD_TOKEN tanımlayın.');
+}
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -14,8 +19,10 @@ const client = new Client({
 });
 
 client.commands = new Collection();
+client.isMaster = true;
 client.settings = require('./utils/settings');
 client.voiceService = require('./utils/voice');
+client.workerManager = new (require('./utils/worker-manager').WorkerManager)(client, masterToken);
 
 let shuttingDown = false;
 function handleFatalError(error, source) {
@@ -25,6 +32,7 @@ function handleFatalError(error, source) {
 
     shuttingDown = true;
     console.error(`Kritik süreç hatası (${source}); bot güvenli biçimde kapatılıyor:`, error);
+    client.workerManager.destroy();
     client.destroy();
     process.exitCode = 1;
     setTimeout(() => process.exit(1), 1_000);
@@ -56,9 +64,11 @@ for (const file of commandFiles) {
 }
 
 client.once('ready', async () => {
-    client.voiceService.connectConfiguredVoiceChannels(client).catch(error => {
-        console.error('Sunucuların sabit ses kanalı ayarları yüklenemedi:', error);
-    });
+    try {
+        await client.workerManager.start();
+    } catch (error) {
+        console.error('Worker havuzu başlatılırken hata oluştu:', error);
+    }
 
     try {
         const commands = [...client.commands.values()].map(command => command.toJSON());
@@ -71,15 +81,7 @@ client.once('ready', async () => {
     console.log(`Bot başarıyla aktif edildi: ${client.user.tag}`);
 });
 
-client.on('guildCreate', guild => {
-    client.voiceService.connectConfiguredVoiceChannelForGuild(client, guild).catch(error => {
-        console.error(`Yeni sunucunun sabit ses ayarı yüklenemedi (${guild.id}):`, error);
-    });
-});
-
 client.on('guildDelete', guild => {
-    client.voiceService.disconnectPersistentVoiceChannelForGuild(guild.id);
-
     try {
         const removed = client.settings.deleteGuildSettings(guild.id);
         if (removed) {
@@ -90,12 +92,7 @@ client.on('guildDelete', guild => {
     }
 });
 
-const botToken = process.env.BOT_TOKEN || process.env.DISCORD_TOKEN;
-if (!botToken) {
-    throw new Error('Bot token bulunamadı. .env içinde BOT_TOKEN veya DISCORD_TOKEN tanımlayın.');
-}
-
-client.login(botToken).catch(error => {
+client.login(masterToken).catch(error => {
     console.error('Discord bot oturumu açılamadı. Token ve ağ ayarlarını kontrol edin:', error);
     client.destroy();
     process.exitCode = 1;

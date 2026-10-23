@@ -18,27 +18,35 @@ module.exports = client => {
             description: 'Yönetim komutları sunucu yöneticileri tarafından kullanılabilir.'
         }).addFields(
             {
-                name: '/setup `<kategori>` `<rol>` `[ses_kanali]`',
-                value: 'Sunucu sahibi, yöneticisi veya özel yönetici rolü kullanabilir. Kayıt kategorisi ve kayıt yetkilisi rolünü ayarlar; `ses_kanali` sabit kanalı, ses seçenekleri botun ses durumunu belirler.'
+                name: '/kayit-ayar `<kategori>` `<rol>`',
+                value: 'Yönetici kayıt kategorisini ve kayıt yetkilisi rolünü ayarlar.'
             },
             {
-                name: '/log `<kanal>`',
+                name: '/ses-kanal `<kanal>`',
+                value: 'Yönetici botun bu sunucuda sabit kalacağı ses kanalını ayarlar.'
+            },
+            {
+                name: '/ses-durum `[durum]` `[mikrofon_acik]` `[kulaklik_acik]`',
+                value: 'Yönetici botun ses kanalındaki mikrofon ve kulaklık tercihlerini ayarlar.'
+            },
+            {
+                name: '/log-kanal `<kanal>`',
                 value: 'Yönetici veya log/güvenlik yetkilisi kayıt bildirim kanalını ayarlayabilir.'
             },
             {
-                name: '/panel `<kanal>`',
+                name: '/panel-kur `<kanal>`',
                 value: 'Sunucu sahibi, yönetici veya özel yönetici rolü kullanabilir. Kayıt panelini gönderir; metin, buton ve görselleri özelleştirir.'
             },
             {
                 name: '/yetki-ayarla `[yonetici_rolu]` `[log_rolu]`',
-                value: 'Yalnızca sunucu sahibi veya Discord Administrator özel yönetici ve log/güvenlik rollerini atayabilir veya kaldırabilir. Kayıt rolü `/setup` içinden ayarlanır.'
+                value: 'Yalnızca sunucu sahibi veya Discord Administrator özel yönetici ve log/güvenlik rollerini atayabilir veya kaldırabilir. Kayıt rolü `/kayit-ayar` içinden ayarlanır.'
             },
             {
                 name: 'Kayıt süresi',
                 value: 'Kayıt yetkilisi talebi devralınca 2 dakikalık geri sayım başlar. Devralma ve sonuçlandırma işlemlerinde kayıt rolü denetlenir. Süre dolarsa oda bilgilendirilir.'
             },
             {
-                name: '/bot-ayar `<logo>`',
+                name: '/sunucu-logo `<logo>`',
                 value: 'Sunucuya özel logo URL’sini kaydeder. Panel ve oda görseli ayrıca belirtilmediyse bu logo kullanılır.'
             },
             {
@@ -50,8 +58,8 @@ module.exports = client => {
                 value: 'Bu komut rehberini gösterir.'
             },
             {
-                name: 'Mesaj modülü durumu',
-                value: '`allusermessage.js` şu anda `!duyuru` tetikleyicisine yalnızca modülün aktif olduğuna dair yanıt verir. `/all-user-message` komutu veya toplu mesaj gönderimi henüz uygulanmış değildir.'
+                name: 'Slash olmayan tetikleyici',
+                value: '`!duyuru` mesajı toplu mesaj göndermez; yalnızca `allusermessage.js` modülünün aktif olduğuna dair yanıt verir.'
             }
         );
 

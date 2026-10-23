@@ -1,6 +1,5 @@
 const {
     entersState,
-    getVoiceConnection,
     joinVoiceChannel,
     VoiceConnectionStatus
 } = require('@discordjs/voice');
@@ -8,11 +7,27 @@ const { ChannelType, PermissionsBitField } = require('discord.js');
 
 const persistentConnections = new Map();
 const initialConnectionRetries = new Map();
+const voiceStateRecoveryPromises = new Map();
+const monitoredClients = new WeakSet();
 const MAX_RECONNECT_DELAY_MS = 60_000;
+const CONNECTION_HEALTH_CHECK_INTERVAL_MS = 30_000;
+const CONNECTION_RECOVERY_TIMEOUT_MS = 2_000;
 const ADAPTER_READY_ATTEMPTS = 3;
 const ADAPTER_RETRY_DELAY_MS = 1_000;
 const GUILD_CACHE_ATTEMPTS = 5;
 const GUILD_CACHE_RETRY_DELAY_MS = 1_000;
+
+function getVoiceClientId(client) {
+    return client?.user?.id || client?.workerName || 'master';
+}
+
+function getConnectionKey(client, guildId) {
+    return `${getVoiceClientId(client)}:${guildId}`;
+}
+
+function getRetryKey(client, guildId, channelId) {
+    return `${getVoiceClientId(client)}:${guildId}:${channelId}`;
+}
 
 function delay(milliseconds) {
     return new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -49,20 +64,21 @@ async function resolveGuild(client, guildId) {
     throw new Error(`Guild ${guildId} or its voice adapter is unavailable after ${GUILD_CACHE_ATTEMPTS} attempts`);
 }
 
-function scheduleInitialConnectionRetry(client, channelId, error) {
-    if (initialConnectionRetries.has(channelId)) {
+function scheduleInitialConnectionRetry(client, guildId, channelId, error) {
+    const retryKey = getRetryKey(client, guildId, channelId);
+    if (initialConnectionRetries.has(retryKey)) {
         return;
     }
 
     console.error(`Voice connection to channel ${channelId} failed; retrying in 3 seconds:`, error);
     const timer = setTimeout(() => {
-        initialConnectionRetries.delete(channelId);
+        initialConnectionRetries.delete(retryKey);
         connectPersistentVoiceChannelById(client, channelId).catch(retryError => {
-            scheduleInitialConnectionRetry(client, channelId, retryError);
+            scheduleInitialConnectionRetry(client, guildId, channelId, retryError);
         });
     }, 3_000);
     timer.unref?.();
-    initialConnectionRetries.set(channelId, timer);
+    initialConnectionRetries.set(retryKey, timer);
 }
 
 async function getVoiceAdapter(guild, channelId) {
@@ -88,7 +104,7 @@ async function getVoiceAdapter(guild, channelId) {
 }
 
 function scheduleReconnect(state, error) {
-    if (!state.active || state.retryTimer || state.connectPromise) {
+    if (!state.active || state.retryTimer) {
         return;
     }
 
@@ -116,19 +132,117 @@ function scheduleReconnect(state, error) {
 }
 
 async function recoverDisconnectedConnection(state, connection) {
-    if (state.connection !== connection || state.retryTimer) {
+    if (state.connection !== connection || state.retryTimer || state.recoveryPromise) {
         return;
     }
 
-    try {
-        await entersState(connection, VoiceConnectionStatus.Signalling, 5_000);
-    } catch {
+    state.recoveryPromise = (async () => {
         try {
-            await entersState(connection, VoiceConnectionStatus.Connecting, 5_000);
+            await entersState(connection, VoiceConnectionStatus.Signalling, CONNECTION_RECOVERY_TIMEOUT_MS);
         } catch (error) {
-            scheduleReconnect(state, error);
+            try {
+                await entersState(connection, VoiceConnectionStatus.Connecting, CONNECTION_RECOVERY_TIMEOUT_MS);
+            } catch (connectingError) {
+                scheduleReconnect(state, connectingError || error);
+            }
         }
+    })();
+
+    try {
+        await state.recoveryPromise;
+    } finally {
+        state.recoveryPromise = null;
     }
+}
+
+function startConnectionHealthCheck(state) {
+    if (state.healthCheckTimer) {
+        return;
+    }
+
+    state.healthCheckTimer = setInterval(() => {
+        if (!state.active || state.retryTimer || state.connectPromise) {
+            return;
+        }
+
+        const connection = state.connection;
+        if (!connection) {
+            connectPersistentState(state).catch(error => scheduleReconnect(state, error));
+            return;
+        }
+
+        if (connection.state.status === VoiceConnectionStatus.Disconnected) {
+            recoverDisconnectedConnection(state, connection).catch(error => scheduleReconnect(state, error));
+            return;
+        }
+
+        if (connection.state.status !== VoiceConnectionStatus.Ready) {
+            scheduleReconnect(
+                state,
+                new Error(`Voice connection health check found status ${connection.state.status}`)
+            );
+            return;
+        }
+
+        entersState(connection, VoiceConnectionStatus.Ready, CONNECTION_RECOVERY_TIMEOUT_MS)
+            .catch(error => scheduleReconnect(state, error));
+    }, CONNECTION_HEALTH_CHECK_INTERVAL_MS);
+    state.healthCheckTimer.unref?.();
+}
+
+function attachVoiceStateMonitor(client) {
+    if (!client || monitoredClients.has(client)) {
+        return;
+    }
+
+    monitoredClients.add(client);
+    client.on('voiceStateUpdate', (_oldState, newState) => {
+        if (newState.member?.id !== client.user?.id || !newState.guild?.id) {
+            return;
+        }
+
+        const guildId = newState.guild.id;
+        if (client.isMaster === false && !client.workerManager?.isMasterActiveForGuild(guildId)) {
+            return;
+        }
+
+        const state = persistentConnections.get(getConnectionKey(client, guildId));
+        if (!state
+            || (client.isMaster === false
+                && !client.workerManager.isWorkerActiveForVoiceChannel(client, guildId, state.channel.id))) {
+            return;
+        }
+
+        if (newState.channelId === state.channel.id) {
+            return;
+        }
+
+        const recoveryKey = getConnectionKey(client, guildId);
+        const pendingRecovery = voiceStateRecoveryPromises.get(recoveryKey);
+        if (pendingRecovery) {
+            return;
+        }
+
+        if (!state.connectPromise) {
+            scheduleReconnect(
+                state,
+                new Error(`Bot left assigned voice channel ${state.channel.id}`)
+            );
+            return;
+        }
+
+        const recovery = connectPersistentVoiceChannelById(client, state.channel.id)
+            .catch(error => {
+                console.error(
+                    `Bot left assigned voice channel in guild ${guildId}; automatic reconnect is scheduled:`,
+                    error
+                );
+            })
+            .finally(() => {
+                voiceStateRecoveryPromises.delete(recoveryKey);
+            });
+        voiceStateRecoveryPromises.set(recoveryKey, recovery);
+    });
 }
 
 async function connectPersistentState(state) {
@@ -169,6 +283,7 @@ async function connectPersistentState(state) {
             channelId: state.channel.id,
             guildId: state.guild.id,
             adapterCreator,
+            group: getVoiceClientId(state.client),
             ...voicePreferences
         });
 
@@ -220,7 +335,7 @@ async function connectPersistentVoiceChannelById(client, channelId) {
     try {
         guild = await resolveGuild(client, guildId);
     } catch (error) {
-        scheduleInitialConnectionRetry(client, channelId, error);
+        scheduleInitialConnectionRetry(client, guildId, channelId, error);
         throw error;
     }
 
@@ -229,13 +344,10 @@ async function connectPersistentVoiceChannelById(client, channelId) {
         throw new Error(`Voice channel ${channelId} is unavailable after loading guild ${guildId}`);
     }
 
-    let state = persistentConnections.get(guildId);
+    const connectionKey = getConnectionKey(client, guildId);
+    let state = persistentConnections.get(connectionKey);
     if (state && state.channel.id !== channel.id) {
-        state.active = false;
-        if (state.retryTimer) {
-            clearTimeout(state.retryTimer);
-        }
-        state.connection?.destroy();
+        stopPersistentState(state);
         state = null;
     }
 
@@ -248,9 +360,12 @@ async function connectPersistentVoiceChannelById(client, channelId) {
             connectPromise: null,
             active: true,
             retryCount: 0,
-            retryTimer: null
+            retryTimer: null,
+            healthCheckTimer: null,
+            recoveryPromise: null
         };
-        persistentConnections.set(guildId, state);
+        persistentConnections.set(connectionKey, state);
+        startConnectionHealthCheck(state);
     } else {
         state.client = client;
         state.guild = guild;
@@ -259,15 +374,16 @@ async function connectPersistentVoiceChannelById(client, channelId) {
 
     try {
         await connectPersistentState(state);
-        const retryTimer = initialConnectionRetries.get(channelId);
+        const retryKey = getRetryKey(client, guildId, channelId);
+        const retryTimer = initialConnectionRetries.get(retryKey);
         if (retryTimer) {
             clearTimeout(retryTimer);
-            initialConnectionRetries.delete(channelId);
+            initialConnectionRetries.delete(retryKey);
         }
         return channel;
     } catch (error) {
         scheduleReconnect(state, error);
-        scheduleInitialConnectionRetry(client, channelId, error);
+        scheduleInitialConnectionRetry(client, guildId, channelId, error);
         throw error;
     }
 }
@@ -285,7 +401,14 @@ async function connectConfiguredVoiceChannels(client) {
 }
 
 async function connectConfiguredVoiceChannelForGuild(client, guild) {
-    const channelId = client.settings.getGuildSettings(guild.id).voiceChannelId;
+    if (client.workerManager?.reconcileGuild) {
+        return client.workerManager.reconcileGuild(guild.id);
+    }
+
+    const settings = client.settings.getGuildSettings(guild.id);
+    const channelId = Array.isArray(settings.voiceChannelIds) && settings.voiceChannelIds.length
+        ? settings.voiceChannelIds[0]
+        : settings.voiceChannelId;
     if (!channelId) {
         return;
     }
@@ -298,37 +421,79 @@ async function connectConfiguredVoiceChannelForGuild(client, guild) {
     }
 }
 
-function disconnectPersistentVoiceChannelForGuild(guildId) {
-    const state = persistentConnections.get(guildId);
-    if (!state) {
-        return false;
-    }
-
+function stopPersistentState(state) {
     state.active = false;
     if (state.retryTimer) {
         clearTimeout(state.retryTimer);
     }
-
-    const initialRetry = initialConnectionRetries.get(state.channel.id);
-    if (initialRetry) {
-        clearTimeout(initialRetry);
-        initialConnectionRetries.delete(state.channel.id);
+    if (state.healthCheckTimer) {
+        clearInterval(state.healthCheckTimer);
     }
 
+    const retryKey = getRetryKey(state.client, state.guild.id, state.channel.id);
+    const initialRetry = initialConnectionRetries.get(retryKey);
+    if (initialRetry) {
+        clearTimeout(initialRetry);
+        initialConnectionRetries.delete(retryKey);
+    }
     state.connection?.destroy();
-    persistentConnections.delete(guildId);
-    return true;
+    const connectionKey = getConnectionKey(state.client, state.guild.id);
+    if (persistentConnections.get(connectionKey) === state) {
+        persistentConnections.delete(connectionKey);
+    }
+}
+
+function disconnectPersistentVoiceChannelForGuild(guildId, client) {
+    const states = [...persistentConnections.entries()]
+        .filter(([, state]) => state.guild.id === guildId && (!client || state.client === client));
+    for (const [, state] of states) {
+        stopPersistentState(state);
+    }
+
+    const retryPrefix = client
+        ? `${getVoiceClientId(client)}:${guildId}:`
+        : null;
+    for (const [retryKey, timer] of initialConnectionRetries) {
+        if ((retryPrefix && retryKey.startsWith(retryPrefix))
+            || (!client && retryKey.split(':')[1] === guildId)) {
+            clearTimeout(timer);
+            initialConnectionRetries.delete(retryKey);
+        }
+    }
+    return states.length > 0;
+}
+
+function disconnectAllPersistentVoiceChannels() {
+    const states = [...persistentConnections.values()];
+    for (const state of states) {
+        stopPersistentState(state);
+    }
+    for (const timer of initialConnectionRetries.values()) {
+        clearTimeout(timer);
+    }
+    initialConnectionRetries.clear();
+    return states.length;
 }
 
 async function joinMemberVoiceChannel(member) {
     const guildId = member?.guild?.id || member?.voice?.channel?.guild?.id;
     const client = member?.client || member?.guild?.client;
-    const configuredChannelId = client?.settings?.getGuildSettings(guildId)?.voiceChannelId;
-    if (configuredChannelId && client.voiceService) {
+    const memberChannelId = member?.voice?.channelId || member?.voice?.channel?.id;
+    if (memberChannelId && client?.voiceService) {
+        return connectPersistentVoiceChannelById(client, memberChannelId);
+    }
+
+    const settings = client?.settings?.getGuildSettings(guildId);
+    const configuredChannelId = Array.isArray(settings?.voiceChannelIds) && settings.voiceChannelIds.length
+        ? settings.voiceChannelIds[0]
+        : settings?.voiceChannelId;
+    if (configuredChannelId && client?.voiceService) {
         return connectPersistentVoiceChannelById(client, configuredChannelId);
     }
 
-    const persistentState = guildId ? persistentConnections.get(guildId) : null;
+    const persistentState = guildId
+        ? persistentConnections.get(getConnectionKey(client, guildId))
+        : null;
     if (persistentState) {
         await connectPersistentState(persistentState);
         return persistentState.channel;
@@ -339,46 +504,15 @@ async function joinMemberVoiceChannel(member) {
         return null;
     }
 
-    const adapterCreator = await getVoiceAdapter(channel.guild, channel.id);
-    const botMember = await channel.guild.members.fetchMe();
-    const permissions = channel.permissionsFor(botMember);
-    if (!permissions?.has(PermissionsBitField.Flags.Connect)) {
-        throw new Error(`Bot does not have permission to connect to voice channel ${channel.id}`);
-    }
-
-    const existingConnection = getVoiceConnection(channel.guild.id);
-    const voicePreferences = client?.settings?.getGuildVoicePreferences
-        ? client.settings.getGuildVoicePreferences(channel.guild.id)
-        : { selfDeaf: true, selfMute: true };
-    const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: channel.guild.id,
-        adapterCreator,
-        ...voicePreferences
-    });
-
-    if (!existingConnection) {
-        connection.on('error', error => {
-            console.error(`Voice connection error in guild ${channel.guild.id}:`, error);
-        });
-    }
-
-    try {
-        await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
-    } catch (error) {
-        if (connection.state.status !== VoiceConnectionStatus.Ready) {
-            connection.destroy();
-        }
-        throw error;
-    }
-
-    return channel;
+    return connectPersistentVoiceChannelById(client, channel.id);
 }
 
 module.exports = {
+    attachVoiceStateMonitor,
     connectConfiguredVoiceChannels,
     connectConfiguredVoiceChannelForGuild,
     connectPersistentVoiceChannelById,
     disconnectPersistentVoiceChannelForGuild,
+    disconnectAllPersistentVoiceChannels,
     joinMemberVoiceChannel
 };

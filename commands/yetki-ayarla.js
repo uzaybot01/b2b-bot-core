@@ -86,7 +86,7 @@ module.exports = client => {
             },
             {
                 name: 'Kayıt yetkilisi rolü',
-                value: 'Mevcut `/setup` komutundaki `rol` ayarı kullanılır.',
+                value: 'Mevcut `/kayit-ayar` komutundaki `rol` ayarı kullanılır.',
                 inline: false
             }
         );

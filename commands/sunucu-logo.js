@@ -6,7 +6,7 @@ const { checkCommandAccess } = require('../utils/interaction-guard');
 
 module.exports = client => {
     const command = new SlashCommandBuilder()
-        .setName('bot-ayar')
+        .setName('sunucu-logo')
         .setDescription('Sunucuya özel panel logosunu ayarlar.')
         .addStringOption(option =>
             option.setName('logo')
