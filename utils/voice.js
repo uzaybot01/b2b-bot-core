@@ -16,6 +16,7 @@ const ADAPTER_READY_ATTEMPTS = 3;
 const ADAPTER_RETRY_DELAY_MS = 1_000;
 const GUILD_CACHE_ATTEMPTS = 5;
 const GUILD_CACHE_RETRY_DELAY_MS = 1_000;
+const MAX_RECONNECT_ATTEMPTS = 8;
 
 function getVoiceClientId(client) {
     return client?.user?.id || client?.workerName || 'master';
@@ -33,9 +34,65 @@ function delay(milliseconds) {
     return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+function isPermanentVoiceError(error) {
+    if (!error) return false;
+    if (error.isPermissionError) return true;
+    const message = error.message || '';
+    const code = error.code;
+    if (code === 50001 || code === 50013 || code === 10003) return true;
+    if (message.includes('izin') || message.includes('permission') || message.includes('bulunamadı')) {
+        return true;
+    }
+    return false;
+}
+
+function validateVoicePermissions(channel, botMember) {
+    if (!channel) {
+        const error = new Error('Ses kanalı bulunamadı veya erişilemez durumda');
+        error.code = 10003;
+        throw error;
+    }
+
+    if (!botMember) {
+        const error = new Error('Bot üyesi sunucuda bulunamadı');
+        error.code = 'BOT_MEMBER_NOT_FOUND';
+        throw error;
+    }
+
+    const permissions = channel.permissionsFor(botMember);
+    if (!permissions) {
+        const error = new Error(`Kanal izinleri hesaplanamadı: ${channel.id}`);
+        error.isPermissionError = true;
+        throw error;
+    }
+
+    const missing = [];
+    if (!permissions.has(PermissionsBitField.Flags.ViewChannel)) {
+        missing.push('Kanalı Görüntüle (ViewChannel)');
+    }
+    if (!permissions.has(PermissionsBitField.Flags.Connect)) {
+        missing.push('Bağlan (Connect)');
+    }
+
+    if (missing.length > 0) {
+        const error = new Error(`Botun '${channel.name}' ses kanalında gerekli izinleri eksik: ${missing.join(', ')}`);
+        error.isPermissionError = true;
+        error.missingPermissions = missing;
+        throw error;
+    }
+
+    if (channel.userLimit > 0 && channel.members.size >= channel.userLimit && !permissions.has(PermissionsBitField.Flags.MoveMembers)) {
+        const error = new Error(`'${channel.name}' kanalı dolu (Kapasite: ${channel.userLimit}) ve bot üyeleri taşıma yetkisine sahip değil`);
+        error.isPermissionError = true;
+        throw error;
+    }
+
+    return true;
+}
+
 async function resolveGuild(client, guildId) {
     if (!client || !guildId) {
-        throw new Error('Cannot connect to voice channel: client or guild ID is unavailable');
+        throw new Error('Ses kanalına bağlanılamıyor: İstemci veya sunucu kimliği geçersiz');
     }
 
     for (let attempt = 1; attempt <= GUILD_CACHE_ATTEMPTS; attempt += 1) {
@@ -52,7 +109,7 @@ async function resolveGuild(client, guildId) {
             }
         } catch (error) {
             console.warn(
-                `Guild ${guildId} is not ready for voice connection (attempt ${attempt}/${GUILD_CACHE_ATTEMPTS}): ${error.message}`
+                `Sunucu ${guildId} ses adaptörü henüz hazır değil (Deneme ${attempt}/${GUILD_CACHE_ATTEMPTS}): ${error.message}`
             );
         }
 
@@ -61,19 +118,23 @@ async function resolveGuild(client, guildId) {
         }
     }
 
-    throw new Error(`Guild ${guildId} or its voice adapter is unavailable after ${GUILD_CACHE_ATTEMPTS} attempts`);
+    throw new Error(`Sunucu ${guildId} veya ses adaptörü ${GUILD_CACHE_ATTEMPTS} deneme sonrasında kullanılamadı`);
 }
 
 function scheduleInitialConnectionRetry(client, guildId, channelId, error) {
+    if (isPermanentVoiceError(error)) {
+        return;
+    }
+
     const retryKey = getRetryKey(client, guildId, channelId);
     if (initialConnectionRetries.has(retryKey)) {
         return;
     }
 
-    console.error(`Voice connection to channel ${channelId} failed; retrying in 3 seconds:`, error);
+    console.warn(`[Ses Worker] ${channelId} kanalına ilk bağlantı başarısız; 3 saniye sonra yeniden denenecek:`, error.message || error);
     const timer = setTimeout(() => {
         initialConnectionRetries.delete(retryKey);
-        connectPersistentVoiceChannelById(client, channelId).catch(retryError => {
+        connectVoiceChannelById(client, channelId).catch(retryError => {
             scheduleInitialConnectionRetry(client, guildId, channelId, retryError);
         });
     }, 3_000);
@@ -83,7 +144,7 @@ function scheduleInitialConnectionRetry(client, guildId, channelId, error) {
 
 async function getVoiceAdapter(guild, channelId) {
     if (!guild || typeof guild.id !== 'string' || !guild.id) {
-        throw new Error(`Cannot connect to voice channel ${channelId}: guild is not available`);
+        throw new Error(`Ses kanalına (${channelId}) bağlanılamıyor: Sunucu bulunamadı`);
     }
 
     for (let attempt = 1; attempt <= ADAPTER_READY_ATTEMPTS; attempt += 1) {
@@ -92,15 +153,15 @@ async function getVoiceAdapter(guild, channelId) {
         }
 
         console.warn(
-            `Voice adapter is not ready for guild ${guild.id} (attempt ${attempt}/${ADAPTER_READY_ATTEMPTS}); retrying in ${ADAPTER_RETRY_DELAY_MS}ms`
+            `Sunucu ${guild.id} için ses adaptörü hazır değil (Deneme ${attempt}/${ADAPTER_READY_ATTEMPTS}); ${ADAPTER_RETRY_DELAY_MS}ms içinde yeniden denenecek`
         );
 
         if (attempt < ADAPTER_READY_ATTEMPTS) {
-            await new Promise(resolve => setTimeout(resolve, ADAPTER_RETRY_DELAY_MS));
+            await delay(ADAPTER_RETRY_DELAY_MS);
         }
     }
 
-    throw new Error(`Voice adapter is unavailable for guild ${guild.id}, channel ${channelId}`);
+    throw new Error(`Sunucu ${guild.id}, kanal ${channelId} için ses adaptörü kullanılamıyor`);
 }
 
 function scheduleReconnect(state, error) {
@@ -108,12 +169,28 @@ function scheduleReconnect(state, error) {
         return;
     }
 
-    console.error(`Reconnecting voice connection for guild ${state.guild.id}:`, error);
+    if (isPermanentVoiceError(error)) {
+        console.warn(
+            `[Ses Worker] Sunucu ${state.guild.id} için izin eksikliği veya geçersiz kanal nedeniyle yeniden bağlanma durduruldu: ${error.message}`
+        );
+        stopPersistentState(state);
+        return;
+    }
+
+    if (state.retryCount >= MAX_RECONNECT_ATTEMPTS) {
+        console.error(
+            `[Ses Worker] Sunucu ${state.guild.id} için maksimum yeniden bağlanma denemesine (${MAX_RECONNECT_ATTEMPTS}) ulaşıldı; bağlantı durduruldu.`
+        );
+        stopPersistentState(state);
+        return;
+    }
+
+    console.warn(`[Ses Worker] Sunucu ${state.guild.id} ses bağlantısı kesildi; yeniden deneniyor (Deneme ${state.retryCount + 1}/${MAX_RECONNECT_ATTEMPTS}):`, error?.message || error);
 
     const previousConnection = state.connection;
     state.connection = null;
 
-    const delay = Math.min(1_000 * (2 ** state.retryCount), MAX_RECONNECT_DELAY_MS);
+    const backoffDelay = Math.min(1_000 * (2 ** state.retryCount), MAX_RECONNECT_DELAY_MS);
     state.retryCount += 1;
     state.retryTimer = setTimeout(() => {
         state.retryTimer = null;
@@ -123,11 +200,15 @@ function scheduleReconnect(state, error) {
         connectPersistentState(state).catch(reconnectError => {
             scheduleReconnect(state, reconnectError);
         });
-    }, delay);
+    }, backoffDelay);
     state.retryTimer.unref?.();
 
     if (previousConnection && previousConnection.state.status !== VoiceConnectionStatus.Destroyed) {
-        previousConnection.destroy();
+        try {
+            previousConnection.destroy();
+        } catch {
+            // sessizce geç
+        }
     }
 }
 
@@ -179,7 +260,7 @@ function startConnectionHealthCheck(state) {
         if (connection.state.status !== VoiceConnectionStatus.Ready) {
             scheduleReconnect(
                 state,
-                new Error(`Voice connection health check found status ${connection.state.status}`)
+                new Error(`Ses bağlantı sağlık kontrolü beklenen durumda değil: ${connection.state.status}`)
             );
             return;
         }
@@ -207,13 +288,31 @@ function attachVoiceStateMonitor(client) {
         }
 
         const state = persistentConnections.get(getConnectionKey(client, guildId));
-        if (!state
-            || (client.isMaster === false
-                && !client.workerManager.isWorkerActiveForVoiceChannel(client, guildId, state.channel.id))) {
+        if (!state) {
             return;
         }
 
+        // 1. Durum: Bot aynı kanalda (yalnızca durum/deaf/mute değişikliği)
         if (newState.channelId === state.channel.id) {
+            return;
+        }
+
+        // 2. Durum: Bot sunucu içinde başka bir ses kanalına dinamik olarak taşındı (Move / Drag)
+        if (newState.channelId) {
+            const newChannel = newState.channel || client.channels.cache.get(newState.channelId);
+            console.log(
+                `[Ses Worker] ${client.workerName || client.user.tag} yeni kanala taşındı: ${newChannel?.name || newState.channelId} (${guildId})`
+            );
+            state.channel = newChannel || { id: newState.channelId, guildId, type: ChannelType.GuildVoice };
+            state.retryCount = 0;
+            if (client.workerManager?.updateWorkerVoiceChannel) {
+                client.workerManager.updateWorkerVoiceChannel(client, guildId, newState.channelId);
+            }
+            return;
+        }
+
+        // 3. Durum: Bot kanaldan çıkarıldı / bağlantı koptu (newState.channelId === null)
+        if (!state.active) {
             return;
         }
 
@@ -223,19 +322,23 @@ function attachVoiceStateMonitor(client) {
             return;
         }
 
+        console.warn(
+            `[Ses Worker] ${client.workerName || client.user.tag} ses kanalından ayrıldı (${state.channel.id}); yeniden bağlanma tetikleniyor.`
+        );
+
         if (!state.connectPromise) {
             scheduleReconnect(
                 state,
-                new Error(`Bot left assigned voice channel ${state.channel.id}`)
+                new Error(`Bot ses kanalından ayrıldı (${state.channel.id})`)
             );
             return;
         }
 
-        const recovery = connectPersistentVoiceChannelById(client, state.channel.id)
+        const recovery = connectVoiceChannelById(client, state.channel.id)
             .catch(error => {
-                console.error(
-                    `Bot left assigned voice channel in guild ${guildId}; automatic reconnect is scheduled:`,
-                    error
+                console.warn(
+                    `[Ses Worker] Otomatik yeniden bağlanma başarısız (${guildId}, ${state.channel.id}):`,
+                    error.message || error
                 );
             })
             .finally(() => {
@@ -256,7 +359,10 @@ async function connectPersistentState(state) {
     }
 
     state.connectPromise = (async () => {
-        const voicePreferences = state.client.settings.getGuildVoicePreferences(state.guild.id);
+        const voicePreferences = state.client.settings?.getGuildVoicePreferences?.(state.guild.id) || {
+            selfDeaf: true,
+            selfMute: true
+        };
         const preferencesChanged = state.appliedVoicePreferences
             && (state.appliedVoicePreferences.selfDeaf !== voicePreferences.selfDeaf
                 || state.appliedVoicePreferences.selfMute !== voicePreferences.selfMute);
@@ -264,7 +370,11 @@ async function connectPersistentState(state) {
         if (preferencesChanged && state.connection) {
             const previousConnection = state.connection;
             state.connection = null;
-            previousConnection.destroy();
+            try {
+                previousConnection.destroy();
+            } catch {
+                // sessizce geç
+            }
         }
 
         if (state.connection && state.connection.state.status !== VoiceConnectionStatus.Destroyed) {
@@ -273,11 +383,8 @@ async function connectPersistentState(state) {
         }
 
         const adapterCreator = await getVoiceAdapter(state.guild, state.channel.id);
-        const botMember = await state.guild.members.fetchMe();
-        const permissions = state.channel.permissionsFor(botMember);
-        if (!permissions?.has(PermissionsBitField.Flags.Connect)) {
-            throw new Error(`Bot does not have permission to connect to voice channel ${state.channel.id}`);
-        }
+        const botMember = await state.guild.members.fetchMe().catch(() => null);
+        validateVoicePermissions(state.channel, botMember);
 
         const connection = joinVoiceChannel({
             channelId: state.channel.id,
@@ -298,7 +405,7 @@ async function connectPersistentState(state) {
             } else if (newState.status === VoiceConnectionStatus.Disconnected) {
                 recoverDisconnectedConnection(state, connection);
             } else if (newState.status === VoiceConnectionStatus.Destroyed && state.connection === connection) {
-                scheduleReconnect(state, new Error('Voice connection was destroyed'));
+                scheduleReconnect(state, new Error('Ses bağlantısı yok edildi (Destroyed)'));
             }
         });
 
@@ -311,7 +418,11 @@ async function connectPersistentState(state) {
         return await state.connectPromise;
     } catch (error) {
         if (state.connection && state.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-            state.connection.destroy();
+            try {
+                state.connection.destroy();
+            } catch {
+                // sessizce geç
+            }
         }
         state.connection = null;
         throw error;
@@ -320,15 +431,23 @@ async function connectPersistentState(state) {
     }
 }
 
-async function connectPersistentVoiceChannelById(client, channelId) {
-    let channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
-    if (!channel || channel.type !== ChannelType.GuildVoice) {
-        throw new Error(`Configured voice channel ${channelId} was not found or is not a standard voice channel`);
+async function connectVoiceChannelById(client, channelId, _options = {}) {
+    let channel;
+    try {
+        channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
+    } catch (fetchError) {
+        const error = new Error(`Ses kanalı (${channelId}) bulunamadı veya erişilemez: ${fetchError.message}`);
+        error.code = fetchError.code;
+        throw error;
+    }
+
+    if (!channel || (channel.type !== ChannelType.GuildVoice && channel.type !== ChannelType.GuildStageVoice)) {
+        throw new Error(`Hedef kanal (${channelId}) geçerli bir ses kanalı değil.`);
     }
 
     const guildId = channel.guildId || channel.guild?.id;
     if (!guildId) {
-        throw new Error(`Configured voice channel ${channelId} does not have a guild ID`);
+        throw new Error(`Ses kanalı (${channelId}) için sunucu kimliği bulunamadı.`);
     }
 
     let guild;
@@ -340,12 +459,17 @@ async function connectPersistentVoiceChannelById(client, channelId) {
     }
 
     channel = client.channels.cache.get(channelId) || await client.channels.fetch(channelId);
-    if (!channel || channel.type !== ChannelType.GuildVoice) {
-        throw new Error(`Voice channel ${channelId} is unavailable after loading guild ${guildId}`);
+    if (!channel) {
+        throw new Error(`Ses kanalı (${channelId}) sunucu yüklendikten sonra bulunamadı.`);
     }
+
+    const botMember = await guild.members.fetchMe().catch(() => null);
+    validateVoicePermissions(channel, botMember);
 
     const connectionKey = getConnectionKey(client, guildId);
     let state = persistentConnections.get(connectionKey);
+
+    // Eğer farklı bir kanala geçiş yapılıyorsa eski durumu temizle
     if (state && state.channel.id !== channel.id) {
         stopPersistentState(state);
         state = null;
@@ -370,6 +494,7 @@ async function connectPersistentVoiceChannelById(client, channelId) {
         state.client = client;
         state.guild = guild;
         state.channel = channel;
+        state.active = true;
     }
 
     try {
@@ -392,7 +517,7 @@ async function connectConfiguredVoiceChannels(client) {
     try {
         await client.guilds.fetch();
     } catch (error) {
-        console.error('Guild cache could not be populated before persistent voice setup:', error);
+        console.warn('[Ses Worker] Sunucu önbelleği tam yüklenemedi:', error.message);
     }
 
     await Promise.all([...client.guilds.cache.values()].map(async guild => {
@@ -405,19 +530,21 @@ async function connectConfiguredVoiceChannelForGuild(client, guild) {
         return client.workerManager.reconcileGuild(guild.id);
     }
 
-    const settings = client.settings.getGuildSettings(guild.id);
+    const settings = client.settings?.getGuildSettings?.(guild.id) || {};
     const channelId = Array.isArray(settings.voiceChannelIds) && settings.voiceChannelIds.length
         ? settings.voiceChannelIds[0]
         : settings.voiceChannelId;
+    
+    // Sabit kanal yapılandırılmamışsa sessizce çık, zorunlu değil!
     if (!channelId) {
         return;
     }
 
     try {
-        const channel = await connectPersistentVoiceChannelById(client, channelId);
-        console.log(`Sabit ses kanalına bağlandı: ${guild.name} / ${channel.name} (${channel.id})`);
+        const channel = await connectVoiceChannelById(client, channelId);
+        console.log(`[Ses Worker] Sabit ses kanalına bağlandı: ${guild.name} / ${channel.name} (${channel.id})`);
     } catch (error) {
-        console.error(`Yeni sunucuda sabit ses kanalına bağlanılamadı (${guild.name}, ${channelId}); yeniden denenecek:`, error);
+        console.warn(`[Ses Worker] Sunucuda ses kanalına bağlanılamadı (${guild.name}, ${channelId}):`, error.message);
     }
 }
 
@@ -436,7 +563,11 @@ function stopPersistentState(state) {
         clearTimeout(initialRetry);
         initialConnectionRetries.delete(retryKey);
     }
-    state.connection?.destroy();
+    try {
+        state.connection?.destroy();
+    } catch {
+        // sessizce geç
+    }
     const connectionKey = getConnectionKey(state.client, state.guild.id);
     if (persistentConnections.get(connectionKey) === state) {
         persistentConnections.delete(connectionKey);
@@ -475,27 +606,38 @@ function disconnectAllPersistentVoiceChannels() {
     return states.length;
 }
 
-async function joinMemberVoiceChannel(member) {
+async function joinMemberVoiceChannel(member, targetChannelId = null) {
     const guildId = member?.guild?.id || member?.voice?.channel?.guild?.id;
     const client = member?.client || member?.guild?.client;
-    const memberChannelId = member?.voice?.channelId || member?.voice?.channel?.id;
-    if (memberChannelId && client?.voiceService) {
-        return connectPersistentVoiceChannelById(client, memberChannelId);
+    if (!client?.voiceService) {
+        return null;
     }
 
-    const settings = client?.settings?.getGuildSettings(guildId);
+    // 1. Öncelik: Açıkça belirtilmiş hedef kanal
+    if (targetChannelId) {
+        return connectVoiceChannelById(client, targetChannelId);
+    }
+
+    // 2. Öncelik: Üyenin o an bulunduğu ses kanalı
+    const memberChannelId = member?.voice?.channelId || member?.voice?.channel?.id;
+    if (memberChannelId) {
+        return connectVoiceChannelById(client, memberChannelId);
+    }
+
+    // 3. Öncelik: Sunucu ayarlarındaki kanal (opsiyonel fallback)
+    const settings = client?.settings?.getGuildSettings?.(guildId) || {};
     const configuredChannelId = Array.isArray(settings?.voiceChannelIds) && settings.voiceChannelIds.length
         ? settings.voiceChannelIds[0]
         : settings?.voiceChannelId;
-    if (configuredChannelId && client?.voiceService) {
-        return connectPersistentVoiceChannelById(client, configuredChannelId);
+    if (configuredChannelId) {
+        return connectVoiceChannelById(client, configuredChannelId).catch(() => null);
     }
 
+    // 4. Öncelik: Zaten aktif olan bağlantı kanalı
     const persistentState = guildId
         ? persistentConnections.get(getConnectionKey(client, guildId))
         : null;
-    if (persistentState) {
-        await connectPersistentState(persistentState);
+    if (persistentState?.connection && persistentState.connection.state.status === VoiceConnectionStatus.Ready) {
         return persistentState.channel;
     }
 
@@ -504,15 +646,18 @@ async function joinMemberVoiceChannel(member) {
         return null;
     }
 
-    return connectPersistentVoiceChannelById(client, channel.id);
+    return connectVoiceChannelById(client, channel.id);
 }
 
 module.exports = {
     attachVoiceStateMonitor,
     connectConfiguredVoiceChannels,
     connectConfiguredVoiceChannelForGuild,
-    connectPersistentVoiceChannelById,
+    connectVoiceChannelById,
+    connectPersistentVoiceChannelById: connectVoiceChannelById,
     disconnectPersistentVoiceChannelForGuild,
+    disconnectVoiceChannelForGuild: disconnectPersistentVoiceChannelForGuild,
     disconnectAllPersistentVoiceChannels,
-    joinMemberVoiceChannel
+    joinMemberVoiceChannel,
+    validateVoicePermissions
 };

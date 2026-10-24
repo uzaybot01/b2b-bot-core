@@ -9,19 +9,28 @@ module.exports = {
     register(client) {
         client.voiceService.attachVoiceStateMonitor(client);
     },
-    async connectPersistentVoiceChannel(client, channelId) {
-        return client.voiceService.connectPersistentVoiceChannelById(client, channelId);
+    async connectVoiceChannel(client, channelId, options) {
+        return client.voiceService.connectVoiceChannelById(client, channelId, options);
+    },
+    async connectPersistentVoiceChannel(client, channelId, options) {
+        return client.voiceService.connectVoiceChannelById(client, channelId, options);
+    },
+    async disconnectVoiceChannel(client, guildId) {
+        return client.voiceService.disconnectPersistentVoiceChannelForGuild(guildId, client);
+    },
+    async disconnectPersistentVoiceChannel(client, guildId) {
+        return client.voiceService.disconnectPersistentVoiceChannelForGuild(guildId, client);
     },
     async joinMemberVoiceChannel(client, guildId, userId, channelId) {
         if (channelId) {
-            return client.voiceService.connectPersistentVoiceChannelById(client, channelId);
+            return client.voiceService.connectVoiceChannelById(client, channelId);
         }
 
-        const guild = client.guilds.cache.get(guildId);
+        const guild = client.guilds.cache.get(guildId) || await client.guilds.fetch(guildId).catch(() => null);
         if (!guild) {
-            throw new Error(`Voice worker ${client.workerName} requires a guild-scoped member lookup`);
+            throw new Error(`Voice worker ${client.workerName || client.user?.tag} requires a guild-scoped member lookup`);
         }
-        const member = await guild.members.fetch(userId);
+        const member = await guild.members.fetch(userId).catch(() => null);
         return client.voiceService.joinMemberVoiceChannel(member);
     }
 };

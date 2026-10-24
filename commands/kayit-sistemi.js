@@ -29,18 +29,20 @@ module.exports = (client) => {
 
     const voiceChannelCommand = new SlashCommandBuilder()
         .setName('ses-kanal')
-        .setDescription('Boşta bir ses worker’ını kanala bağlar veya kalıcı kanal listesinden çıkarır.')
+        .setDescription('Ses botunu seçilen ses kanalına dinamik olarak bağlar veya ayırır.')
         .addChannelOption(option =>
             option.setName('kanal')
-                .setDescription('Ses botunun bağlanacağı standart ses kanalı')
-                .addChannelTypes(ChannelType.GuildVoice)
+                .setDescription('Ses botunun bağlanacağı ses kanalı')
+                .addChannelTypes(ChannelType.GuildVoice, ChannelType.GuildStageVoice)
                 .setRequired(true))
         .addStringOption(option =>
             option.setName('islem')
-                .setDescription('Kalıcı kanal listesine ekle (varsayılan) veya listeden çıkar')
+                .setDescription('İşlem türü: Anında bağlan (varsayılan), kalıcı listeye ekle veya ayrıl')
                 .addChoices(
-                    { name: 'Ekle ve bağlan', value: 'ekle' },
-                    { name: 'Çıkar ve bağlantıyı kes', value: 'cikar' }
+                    { name: 'Anında bağlan (dinamik)', value: 'baglan' },
+                    { name: 'Bağlan ve kalıcı listeye kaydet', value: 'ekle' },
+                    { name: 'Kanaldan ayrıl', value: 'ayril' },
+                    { name: 'Kalıcı listeden çıkar ve ayrıl', value: 'cikar' }
                 )
                 .setRequired(false))
         .setDefaultMemberPermissions(0n);
@@ -176,7 +178,7 @@ module.exports = (client) => {
 
         if (interaction.commandName === voiceChannelCommand.name) {
             const voiceChannel = interaction.options.getChannel('kanal');
-            const action = interaction.options.getString('islem') || 'ekle';
+            const action = interaction.options.getString('islem') || 'baglan';
             const settings = client.settings.getGuildSettings(guildId);
             const configuredChannels = Array.isArray(settings.voiceChannelIds)
                 && settings.voiceChannelIds.length
@@ -185,69 +187,65 @@ module.exports = (client) => {
                     ? [settings.voiceChannelId]
                     : [];
 
-            if (action === 'cikar') {
-                if (!configuredChannels.includes(voiceChannel.id)) {
+            if (action === 'cikar' || action === 'ayril') {
+                const isConfigured = configuredChannels.includes(voiceChannel.id);
+                if (action === 'cikar' && !isConfigured) {
                     return interaction.reply({
                         content: `ℹ️ **${voiceChannel.name}** kalıcı ses kanalları listesinde bulunmuyor.`,
                         flags: 64
                     });
                 }
 
-                const remainingChannels = configuredChannels.filter(channelId => channelId !== voiceChannel.id);
-                client.settings.updateGuildSettings(guildId, {
-                    voiceChannelIds: remainingChannels,
-                    voiceChannelId: remainingChannels[0] || null
-                });
-                client.workerManager.disconnectPersistentVoiceChannel(guildId, voiceChannel.id);
+                if (isConfigured && action === 'cikar') {
+                    const remainingChannels = configuredChannels.filter(channelId => channelId !== voiceChannel.id);
+                    client.settings.updateGuildSettings(guildId, {
+                        voiceChannelIds: remainingChannels,
+                        voiceChannelId: remainingChannels[0] || null
+                    });
+                }
+
+                client.workerManager.disconnectVoiceChannel(guildId, voiceChannel.id);
                 return interaction.reply({
-                    content: `✅ **${voiceChannel.name}** kalıcı ses kanalları listesinden çıkarıldı ve bağlantısı kesildi.`,
+                    content: `✅ **${voiceChannel.name}** kanalındaki ses botu bağlantısı kesildi${action === 'cikar' ? ' ve kalıcı listeden çıkarıldı' : ''}.`,
                     flags: 64
                 });
             }
 
-            if (configuredChannels.includes(voiceChannel.id)) {
-                try {
-                    await client.workerManager.connectPersistentVoiceChannel(guildId, voiceChannel.id);
-                } catch (error) {
-                    console.error(`Kayıtlı ses kanalına worker bağlanamadı (${interaction.guild.name}, ${voiceChannel.id}):`, error);
+            if (action === 'ekle') {
+                if (configuredChannels.length >= 4 && !configuredChannels.includes(voiceChannel.id)) {
                     return interaction.reply({
-                        content: `⚠️ **${voiceChannel.name}** kayıtlı kanal olarak korundu ancak şu anda bağlantı kurulamadı. Worker ve kanal izinlerini kontrol edin; birkaç saniye sonra komutu yeniden deneyebilirsiniz.`,
+                        content: '❌ Sunucu başına en fazla dört kalıcı ses kanalı yapılandırılabilir.',
                         flags: 64
                     });
                 }
-                return interaction.reply({
-                    content: `✅ **${voiceChannel.name}** zaten kalıcı listede; worker bağlantısı doğrulandı.`,
-                    flags: 64
-                });
-            }
-            if (configuredChannels.length >= 4) {
-                return interaction.reply({
-                    content: '❌ Sunucu başına en fazla dört kalıcı ses kanalı yapılandırılabilir.',
-                    flags: 64
-                });
+
+                if (!configuredChannels.includes(voiceChannel.id)) {
+                    configuredChannels.push(voiceChannel.id);
+                    try {
+                        client.settings.updateGuildSettings(guildId, {
+                            voiceChannelIds: configuredChannels,
+                            voiceChannelId: configuredChannels[0]
+                        });
+                    } catch (error) {
+                        console.warn(`Sunucu ayarları güncellenemedi (${guildId}):`, error.message);
+                    }
+                }
             }
 
-            const updatedChannels = [...configuredChannels, voiceChannel.id];
-            let settingsSaved = false;
             try {
-                client.settings.updateGuildSettings(guildId, {
-                    voiceChannelIds: updatedChannels,
-                    voiceChannelId: updatedChannels[0]
-                });
-                settingsSaved = true;
-                await client.workerManager.connectPersistentVoiceChannel(guildId, voiceChannel.id);
+                await client.workerManager.connectVoiceChannel(guildId, voiceChannel.id, { allowReassign: true });
             } catch (error) {
-                console.error(`Kalıcı ses kanalı yapılandırılamadı (${interaction.guild.name}, ${voiceChannel.id}):`, error);
+                console.error(`Ses kanalına bağlanılamadı (${interaction.guild.name}, ${voiceChannel.id}):`, error);
                 return interaction.reply({
-                    content: settingsSaved
-                        ? '⚠️ Kanal ayarı kaydedildi ancak şu anda boşta worker bağlanamadı. Worker/kanal izinlerini kontrol edin ve bağlantıyı yeniden denemek için aynı komutu tekrar çalıştırın.'
-                        : '❌ Kanal ayarı kaydedilemedi. Botun sunucu ayar dosyasına yazma iznini kontrol edin.',
+                    content: `⚠️ **${voiceChannel.name}** kanalına bağlanılamadı: ${error.message}\nLütfen botun kanal izinlerini kontrol edin.`,
                     flags: 64
                 });
             }
 
             return interaction.reply({
-                content: `✅ Boşta bir ses botu **${voiceChannel.name}** kanalına bağlandı ve kanal kalıcı listeye eklendi (${updatedChannels.length}/4).`,
+                content: action === 'ekle'
+                    ? `✅ Ses botu **${voiceChannel.name}** kanalına bağlandı ve kalıcı listeye eklendi (${configuredChannels.length}/4).`
+                    : `✅ Ses botu **${voiceChannel.name}** kanalına başarıyla dinamik olarak bağlandı.`,
                 flags: 64
             });
         }

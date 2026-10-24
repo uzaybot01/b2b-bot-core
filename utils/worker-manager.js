@@ -4,6 +4,7 @@ const { Client, Collection, GatewayIntentBits } = require('discord.js');
 
 const WORKER_READY_TIMEOUT_MS = 30_000;
 const MAX_VOICE_WORKERS = 4;
+
 function getWorkerConfigurations(environment) {
     const configurations = [];
 
@@ -300,7 +301,9 @@ class WorkerManager {
         return worker;
     }
 
-    getWorkerForVoiceChannel(guildId, channelId) {
+    getWorkerForVoiceChannel(guildId, channelId, options = {}) {
+        const { allowReassign = true } = options;
+
         if (!this.isMasterActiveForGuild(guildId)) {
             throw new Error(`Ana Bot bu sunucuda hazır değil (${guildId}); worker görevi durduruldu`);
         }
@@ -319,7 +322,8 @@ class WorkerManager {
             this.releaseVoiceAssignment(guildId, channelId, assignedWorker);
         }
 
-        const availableWorkers = this.workers.filter(worker => {
+        // 1. Aşama: Bu sunucuda boşta (herhangi bir kanalda olmayan) bir ses worker'ı bul
+        const idleWorkers = this.workers.filter(worker => {
             if (!worker.isReady()
                 || !worker.workerTasks.has('voice')
                 || !worker.guilds.cache.has(guildId)
@@ -328,21 +332,65 @@ class WorkerManager {
             }
 
             const occupiedChannelId = this.voiceWorkerChannels.get(`${guildId}:${worker.user.id}`);
-            return !occupiedChannelId || occupiedChannelId === channelId;
+            return !occupiedChannelId;
         });
-        if (availableWorkers.length === 0) {
-            throw new Error(
-                `Bu sunucuda '${channelId}' kanalı için boşta ses worker'ı yok (${guildId}); en fazla ${MAX_VOICE_WORKERS} worker eşzamanlı kullanılabilir`
-            );
+
+        if (idleWorkers.length > 0) {
+            const indexKey = `${guildId}:voice`;
+            const nextIndex = this.nextVoiceWorkerIndex.get(indexKey) || 0;
+            const worker = idleWorkers[nextIndex % idleWorkers.length];
+            this.nextVoiceWorkerIndex.set(indexKey, nextIndex + 1);
+            this.voiceAssignments.set(assignmentKey, worker);
+            this.voiceWorkerChannels.set(`${guildId}:${worker.user.id}`, channelId);
+            return worker;
         }
 
-        const indexKey = `${guildId}:voice`;
-        const nextIndex = this.nextVoiceWorkerIndex.get(indexKey) || 0;
-        const worker = availableWorkers[nextIndex % availableWorkers.length];
-        this.nextVoiceWorkerIndex.set(indexKey, nextIndex + 1);
-        this.voiceAssignments.set(assignmentKey, worker);
-        this.voiceWorkerChannels.set(`${guildId}:${worker.user.id}`, channelId);
-        return worker;
+        // 2. Aşama: Boşta worker yoksa fakat dinamik yeniden atama izinliyse:
+        // Bu sunucuya atanmış mevcut worker'lardan birini yeni kanala yönlendir
+        if (allowReassign) {
+            const serverWorkers = this.workers.filter(worker =>
+                worker.isReady()
+                && worker.workerTasks.has('voice')
+                && worker.guilds.cache.has(guildId)
+                && worker.clusterAvailable !== false
+            );
+
+            if (serverWorkers.length > 0) {
+                const indexKey = `${guildId}:voice:reassign`;
+                const nextIndex = this.nextVoiceWorkerIndex.get(indexKey) || 0;
+                const worker = serverWorkers[nextIndex % serverWorkers.length];
+                this.nextVoiceWorkerIndex.set(indexKey, nextIndex + 1);
+
+                const oldChannelId = this.voiceWorkerChannels.get(`${guildId}:${worker.user.id}`);
+                if (oldChannelId) {
+                    this.releaseVoiceAssignment(guildId, oldChannelId, worker);
+                }
+
+                this.voiceAssignments.set(assignmentKey, worker);
+                this.voiceWorkerChannels.set(`${guildId}:${worker.user.id}`, channelId);
+                return worker;
+            }
+        }
+
+        throw new Error(
+            `Bu sunucuda (${guildId}) ses görevi için uygun ses worker'ı bulunamadı. Lütfen ses görevi tanımlı bir worker botunun sunucuya eklendiğinden emin olun.`
+        );
+    }
+
+    updateWorkerVoiceChannel(worker, guildId, newChannelId) {
+        if (!worker?.user?.id || !guildId || !newChannelId) {
+            return;
+        }
+        const workerKey = `${guildId}:${worker.user.id}`;
+        const previousChannelId = this.voiceWorkerChannels.get(workerKey);
+        if (previousChannelId && previousChannelId !== newChannelId) {
+            const prevAssignmentKey = `${guildId}:${previousChannelId}`;
+            if (this.voiceAssignments.get(prevAssignmentKey) === worker) {
+                this.voiceAssignments.delete(prevAssignmentKey);
+            }
+        }
+        this.voiceWorkerChannels.set(workerKey, newChannelId);
+        this.voiceAssignments.set(`${guildId}:${newChannelId}`, worker);
     }
 
     async reconcileGuild(guildId) {
@@ -371,13 +419,15 @@ class WorkerManager {
             : settings.voiceChannelId
                 ? [settings.voiceChannelId]
                 : [];
+        
+        // Sabit ses kanalı yapılandırılmamışsa bot hata vermez, sessizce devam eder (Sabit kanal zorunlu değildir)
         if (configuredVoiceChannelIds.length === 0) {
             return true;
         }
 
         const results = await Promise.all(configuredVoiceChannelIds.map(async channelId => {
             try {
-                await this.connectPersistentVoiceChannel(guildId, channelId);
+                await this.connectVoiceChannel(guildId, channelId, { allowReassign: false });
                 return true;
             } catch (error) {
                 console.warn(`Ses worker görevi beklemede (${guildId}, ${channelId}): ${error.message}`);
@@ -387,31 +437,37 @@ class WorkerManager {
         return results.every(Boolean);
     }
 
-    async connectPersistentVoiceChannel(guildId, channelId) {
+    async connectVoiceChannel(guildId, channelId, options = {}) {
         const masterChannel = this.masterClient.channels.cache.get(channelId)
-            || await this.masterClient.channels.fetch(channelId);
+            || await this.masterClient.channels.fetch(channelId).catch(() => null);
         if (!masterChannel || masterChannel.guildId !== guildId) {
-            throw new Error(`Ses kanalı ${channelId} bu sunucuya ait değil veya erişilemiyor`);
+            throw new Error(`Ses kanalı (${channelId}) bu sunucuya ait değil veya erişilemiyor`);
         }
 
-        const worker = this.getWorkerForVoiceChannel(guildId, channelId);
+        const worker = this.getWorkerForVoiceChannel(guildId, channelId, options);
         try {
             return await this.runTaskOnWorker(
                 worker,
                 'voice',
-                'connectPersistentVoiceChannel',
-                channelId
+                'connectVoiceChannel',
+                channelId,
+                options
             );
         } catch (error) {
             console.error(
-                `Ses worker ${worker.workerName} ${channelId} kanalına bağlanamadı; atama yeniden denemeler için korundu:`,
-                error
+                `Ses worker ${worker.workerName || worker.user?.tag} ${channelId} kanalına bağlanamadı:`,
+                error.message || error
             );
+            this.releaseVoiceAssignment(guildId, channelId, worker);
             throw error;
         }
     }
 
-    disconnectPersistentVoiceChannel(guildId, channelId) {
+    async connectPersistentVoiceChannel(guildId, channelId, options = {}) {
+        return this.connectVoiceChannel(guildId, channelId, options);
+    }
+
+    disconnectVoiceChannel(guildId, channelId) {
         const assignmentKey = `${guildId}:${channelId}`;
         const worker = this.voiceAssignments.get(assignmentKey);
         if (!worker) {
@@ -422,23 +478,42 @@ class WorkerManager {
         return worker.voiceService.disconnectPersistentVoiceChannelForGuild(guildId, worker);
     }
 
+    disconnectPersistentVoiceChannel(guildId, channelId) {
+        return this.disconnectVoiceChannel(guildId, channelId);
+    }
+
     async createRegistrationTicket(guildId, data) {
         return this.runTask(guildId, 'registration', 'createRegistrationTicket', data);
     }
 
-    async joinMemberVoiceChannel(guildId, userId) {
+    async joinMemberVoiceChannel(guildId, userId, targetChannelId = null) {
         if (!this.isMasterActiveForGuild(guildId)) {
             throw new Error(`Ana Bot bu sunucuda hazır değil (${guildId}); worker görevi durduruldu`);
         }
 
-        const guild = this.masterClient.guilds.cache.get(guildId);
-        const member = await guild.members.fetch(userId);
-        const channelId = member.voice.channelId
-            || this.masterClient.settings.getGuildSettings(guildId).voiceChannelId;
+        let channelId = targetChannelId;
+        if (!channelId) {
+            try {
+                const guild = this.masterClient.guilds.cache.get(guildId) || await this.masterClient.guilds.fetch(guildId);
+                const member = await guild.members.fetch(userId);
+                channelId = member?.voice?.channelId;
+            } catch {
+                // Üye fetch edilemezse devam et
+            }
+        }
+
+        if (!channelId) {
+            const settings = this.masterClient.settings?.getGuildSettings?.(guildId) || {};
+            channelId = Array.isArray(settings.voiceChannelIds) && settings.voiceChannelIds.length
+                ? settings.voiceChannelIds[0]
+                : settings.voiceChannelId;
+        }
+
         if (!channelId) {
             return null;
         }
-        return this.connectPersistentVoiceChannel(guildId, channelId);
+
+        return this.connectVoiceChannel(guildId, channelId, { allowReassign: true });
     }
 
     async runTask(guildId, task, operation, ...args) {
